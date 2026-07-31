@@ -20,8 +20,14 @@ an unrelated "browser automation CLI for AI agents" (0.33.1 at the time of writi
 - **This is not publishable under that name**, and `npm i -g agent-browser` installs
   someone else's code. The README said to do exactly that for a while; it now documents
   installing from source.
-- Publishing needs a different name — a scope (`@a4501150/agent-browser`) or a rename.
-  Until then `bin.agent-browser` in package.json only matters for a local `npm link`.
+- **Decision: not published to npm.** `package.json` is `private: true` so an accidental
+  `npm publish` cannot happen. Source install only; `bin.agent-browser` matters only for a
+  local `npm link`.
+- If that is ever revisited, note `agent-browser-mcp` is taken too, and by
+  [minhlucvan/agent-browser-mcp](https://github.com/minhlucvan/agent-browser-mcp) —
+  "MCP server integrating with Vercel's agent-browser", i.e. the one name that would
+  actively assert the association this note exists to deny. A scope
+  (`@a4501150/agent-browser`) is the cheap way out.
 
 ## Layering
 
