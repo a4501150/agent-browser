@@ -118,6 +118,10 @@ export class Instance implements ResponseHost {
         // real window -- for our resizes and for a human dragging the corner
         // alike -- and outerWidth/innerWidth/screen.* cannot disagree.
         viewport: null,
+        // Playwright defaults this off, which passes --no-sandbox -- a flag
+        // Chromium calls unsupported, so it shows an infobar no real user has
+        // and shrinks the viewport under it.
+        chromiumSandbox: true,
         // A no-op on playwright-core 1.62.1, which no longer passes the switch;
         // kept so a future reintroduction cannot leak into our launches.
         ignoreDefaultArgs: ['--enable-automation'],

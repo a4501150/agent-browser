@@ -153,6 +153,19 @@ reintroduction. Playwright's defaults *do* already include `--use-mock-keychain`
 which a locally built Chromium deadlocks on the macOS Keychain prompt) and, when
 headless, the `primaryPointerType`/`primaryHoverType` blink settings.
 
+### `--no-sandbox` is a Playwright default, and it shows
+
+`chromiumSandbox` defaults to **false** on `launchPersistentContext`, so Playwright passes
+`--no-sandbox`. Chromium lists that switch as unsupported and answers with the *"You are
+using an unsupported command-line flag"* infobar — visible to anyone watching a headed
+session, and 52px of `innerHeight` gone under it (measured: 547 vs 599 at a 720px window)
+while `outerHeight` stays put, which is exactly the sort of mismatch the no-viewport-
+emulation rule exists to avoid. `chromiumSandbox: true` in `src/browser/instance.ts` turns
+it off at the source. The patched build sandboxes fine both as a local `out/Default` build
+and as the extracted release asset; confirmed by the renderer carrying `--seatbelt-client`.
+Playwright's default is for Linux CI containers running as root, which this is not.
+
+
 ### Only a temp dir or a slot may be deleted
 
 `Registry.reapOrphans` deletes the user-data directory of an ephemeral record.
