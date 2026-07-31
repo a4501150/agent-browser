@@ -179,7 +179,12 @@ instance registry. Two consequences that are easy to get wrong, and one was ship
 - **An `instance_id` is scoped to one server.** It is not a machine-wide handle, so an id
   from another session is correctly "no such instance". Profiles are the shared thing, and
   the second session to ask for a name gets a copy-on-write clone under `profiles/.slots/`,
-  which is why two sessions can both use `default` without merging cookies.
+  which is why two sessions can both use `default` without merging cookies. **A slot is
+  one-way**: it is deleted on close, so anything the second session wrote — a login
+  included — is silently discarded, while the canonical profile keeps only what the session
+  holding it directly did. Merging is not an option (two live Chromium profiles cannot be
+  reconciled), so concurrent sessions that both need to persist want distinct profile names.
+  Verified by writing a marker in each and reopening.
 
 ### An instance lives as long as its session, not five minutes
 
