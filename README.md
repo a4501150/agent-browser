@@ -22,23 +22,31 @@ Two things are hard about driving a browser for an agent, and most tools get one
 **Not being detected.** The browser is built from
 [fingerprint-chromium](https://github.com/a4501150/undetected-chromium) patches, so the
 tells are removed in C++ rather than papered over with injected JavaScript — which is
-itself the loudest tell. Measured through this server, launched exactly as it launches:
+itself the loudest tell. Both columns below were measured through this server on the same
+machine, changing nothing but `--binary`, so the only variable is the browser:
 
-| Suite | agent-browser | Real Chrome 150 headless |
+| Suite | agent-browser | Real Chrome 150, same server |
 |---|---|---|
-| `navigator.webdriver` | `false` | `false` |
-| `Headless` in the user agent | no | **yes** |
-| bot.sannysoft.com | **0 failed** | 3 failed |
-| deviceandbrowserinfo.com `are_you_a_bot` | **`isBot: false`**, 0 of 22 signals | `isBot: true`, 3 signals |
-| iphey.com | **Trustworthy**, nothing flagged | Unreliable |
-| CreepJS `headless` | **0%** | 67% |
-| CreepJS `stealth` | **0%** | 0% |
+| `navigator.webdriver` | **`false`** | `true` |
+| `Headless` in the user agent | **no** | yes |
+| bot.sannysoft.com | **0 failed** | 4 failed |
+| deviceandbrowserinfo.com `are_you_a_bot` | **`isBot: false`**, 0 of 22 signals | `isBot: true`, 6 signals |
+| iphey.com | **Trustworthy** | Unreliable |
+| CreepJS `headless` | **0%** | 100% |
+| CreepJS `stealth` | 0% | 0% |
 | CreepJS `like headless` | 31% | 38% |
-| browserscan.net/bot-detection | **Normal**, 0 abnormal of 19 | — |
-| nowsecure.nl (real Cloudflare) | **passes** | — |
+| browserscan.net/bot-detection | Normal, 0 abnormal | Normal, 0 abnormal |
+| nowsecure.nl (real Cloudflare) | passes | passes |
 
-Notably `isPlaywright: false` and `isAutomatedWithCDP: false`, so the driver underneath
-is not visible either.
+Both builds come through Playwright and neither is identified as such (`isPlaywright:
+false`). What separates them is that Chrome driven this way leaks the attachment itself —
+`hasWebdriverTrue`, `hasWebdriverInFrameTrue`, `isAutomatedWithCDP`,
+`isAutomatedWithCDPInWebWorker` and `hasInconsistentTimingResolution`, on top of
+`hasBotUserAgent`. This build leaks none of the six, which is why its column is not simply
+"Chrome headless minus the user agent".
+
+**The last two rows do not discriminate**, and are listed so that is visible rather than
+implied: plain headless Chrome passes both. Treat them as a floor, not as evidence.
 
 `like headless` is the one row that does not reach zero, and it should not: **31% is what
 real Chrome 150 _headed_ scores on this machine**, with the same five of sixteen checks
@@ -51,10 +59,13 @@ reports an invented `screen 800x600` whose `availHeight` equals its height, wher
 build reports the real screen. Driving the row to 0% would mean serving an Android API
 surface under a macOS user agent, which is a far louder signal than the one it removes.
 
-Reproduce it yourself:
+Reproduce either column yourself:
 
 ```bash
-npm run build && node scripts/detection-check.mjs
+npm run build
+node scripts/detection-check.mjs                                    # this browser
+node scripts/detection-check.mjs --binary \
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"    # the comparison
 ```
 
 **Reaching everything on the page.** Cross-origin iframes are where most drivers stop.

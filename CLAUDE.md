@@ -239,6 +239,35 @@ the profile lock serialises them anyway.
   untranslated child-local coordinates lands nowhere at all — silently, with no error —
   so the recorded coordinates are the real assertion.
 
+### `like headless` is expected to be non-zero
+
+`detection-check.mjs` reports CreepJS's three ratings. `headless` and `stealth` must be
+0%; `like headless` must not, and reads ~31% on macOS. Every one of the five checks that
+fires is also true on real Chrome *headed* — three of them probe Android-only APIs, one is
+the CSS `ActiveText` colour, and one is the OS light/dark setting, so the number moves
+with the theme rather than with headlessness. README has the full four-way measurement.
+Do not open a patch against it; the patch repo's CLAUDE.md explains why doing so would
+make the browser more identifiable, not less.
+
+### The comparison column has to be measured, not borrowed
+
+README's Chrome column is `detection-check.mjs --binary "/Applications/Google
+Chrome.app/..."` — the same server, the same flags, only the binary swapped. It is *not*
+the table in the patch repo's CLAUDE.md, which launches Chrome standalone with
+`--headless=new` and no driver. Borrowing those numbers put three wrong values in the
+README at once: it claimed Chrome reports `navigator.webdriver: false` (it reports `true`
+here, because the driver is attached), `headless: 67%` (100%) and 3 sannysoft failures
+(4), plus 3 deviceandbrowserinfo signals where the real count is 6.
+
+Both baselines are valid and they answer different questions — "how good is the browser"
+versus "how good is this browser *plus this driver*". The README promises the latter, so
+it must use the latter.
+
+Also worth knowing before citing them: **`nowsecure.nl` and `browserscan.net` do not
+discriminate.** Headless Chrome with `navigator.webdriver === true` passes both. They are
+a floor check. The suites that actually separate the two builds are sannysoft,
+deviceandbrowserinfo, iphey and CreepJS `headless`.
+
 ## Releasing the browser binary
 
 The browser is shipped as a GitHub release asset, never committed to git (`release/` is

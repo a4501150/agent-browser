@@ -142,6 +142,8 @@ const suites = {
         return m ? Number(m[1]) : undefined;
       };
       return {
+        // Expected non-zero, and not a failure: 31% is what real Chrome *headed*
+        // scores. Only 'headless' and 'stealth' are findings. See README.
         likeHeadless: pick('like headless'),
         headless: pick('(?<!like )headless'),
         stealth: pick('stealth'),
