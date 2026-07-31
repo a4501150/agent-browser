@@ -27,10 +27,14 @@ under the Apache License, Version 2.0.
   (@isomorphic/x and @utils/x become relative), so a re-sync against a later
   tag is mechanical.
 
-This product includes ideas and one ported implementation (the DuckDuckGo
-search in src/web/search.ts) from stealth-browser-mcp
+This product includes ideas from stealth-browser-mcp
 (https://github.com/vibheksoni/stealth-browser-mcp), licensed under the MIT
-License.
+License: driving DuckDuckGo from inside a browser page and paginating from
+within that page, and returning a fetched page as one self-contained payload
+(url, title, content, links).
+
+  No implementation remains. The MIT text is retained because the ideas above
+  are still owed attribution.
 
   MIT License
 

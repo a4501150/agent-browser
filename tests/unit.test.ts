@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import { CliExit, parseCli } from '../src/cli';
 import { extract } from '../src/web/extract';
-import { extractArticle, extractLinks, htmlToMarkdown } from '../src/web/markdown';
+import { extractArticle, extractLinks, htmlToMarkdown, isPlausibleArticle, readPage } from '../src/web/markdown';
 import { allTools } from '../src/mcp/registry';
 import { assertUrlAllowed, BlockedUrlError } from '../src/util/ssrf';
 import { parseResults } from '../src/web/search';
+import { maxConcurrentPages, PageGate } from '../src/web/render';
 import { refPattern } from '../src/browser/snapshot';
 
 describe('cli', () => {
@@ -73,6 +74,43 @@ describe('snapshot refs', () => {
   });
 });
 
+describe('page gate', () => {
+  const saturate = async (gate: PageGate) => {
+    for (let i = 0; i < maxConcurrentPages; i++)
+      await gate.acquire(undefined);
+  };
+
+  it('queues past the cap and admits one per release', async () => {
+    const gate = new PageGate();
+    await saturate(gate);
+    let admitted = false;
+    const queued = gate.acquire(undefined).then(() => { admitted = true; });
+    await Promise.resolve();
+    expect(admitted, 'the cap should have held this one back').toBe(false);
+    gate.release();
+    await queued;
+    expect(admitted).toBe(true);
+  });
+
+  it('rejects a queued waiter on abort instead of parking it forever', async () => {
+    // An aborted crawl would otherwise never settle, and its slot would be lost.
+    const gate = new PageGate();
+    await saturate(gate);
+    const controller = new AbortController();
+    const queued = gate.acquire(controller.signal);
+    controller.abort(new Error('caller went away'));
+    await expect(queued).rejects.toThrow('caller went away');
+    gate.release();
+    await expect(gate.acquire(undefined)).resolves.toBeUndefined();
+  });
+
+  it('refuses immediately when the caller has already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('too late'));
+    await expect(new PageGate().acquire(controller.signal)).rejects.toThrow('too late');
+  });
+});
+
 describe('ssrf policy', () => {
   it('refuses non-http schemes', async () => {
     await expect(assertUrlAllowed('file:///etc/passwd', { allowPrivate: true })).rejects.toThrow(BlockedUrlError);
@@ -119,6 +157,15 @@ describe('markdown', () => {
     expect(markdown).toMatch(/1\.\s+one/);
     expect(markdown).toMatch(/2\.\s+two/);
   });
+
+  it('reads the links and the article from one parse', () => {
+    // Readability mutates the document, so a single-parse path has to collect
+    // the links first; if it ever stops doing that, these come back empty.
+    const url = 'https://site.test/dir/sub/index.html';
+    const once = readPage(article, url);
+    expect(once.links).toEqual(extractLinks(article, url));
+    expect(once.article).toEqual(extractArticle(article, url));
+  });
 });
 
 describe('extract', () => {
@@ -157,21 +204,58 @@ describe('extract', () => {
   });
 });
 
-describe('duckduckgo parsing', () => {
-  const html = `<div class="results">
-    <div class="result result--ad"><a class="result__a" href="https://ad.example/x">Sponsored</a></div>
-    <div class="result"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Freal.example%2Fpage">Real</a>
-      <a class="result__snippet">A snippet</a></div>
-    <div class="result"><a class="result__a" href="https://www.bing.com/aclick?ad">Bing ad</a></div>
-    <div class="nav-link"><form action="/html/"><input name="q" value="x"><input name="s" value="30"><input type="submit" value="Next"></form></div>
-  </div>`;
+describe('article plausibility', () => {
+  // Every pair here was measured against saved DOM; they are the specification,
+  // not illustrations. Readability reports no confidence of its own.
+  it('believes a real extraction, down to a code view on a heavy site', () => {
+    expect(isPlausibleArticle(7458, 128619)).toBe(true);   // github README, 5.8% -- the low bound
+    expect(isPlausibleArticle(4412, 24945)).toBe(true);    // MDN
+    expect(isPlausibleArticle(20287, 46077)).toBe(true);   // Chrome release notes
+    expect(isPlausibleArticle(44091, 67926)).toBe(true);   // Wikipedia
+    expect(isPlausibleArticle(3713, 3941)).toBe(true);     // a link list
+  });
 
-  it('unwraps the uddg redirect and rejects ads', () => {
-    const { results, next } = parseResults(html);
-    expect(results.map(r => r.url)).toEqual(['https://real.example/page']);
-    expect(results[0].snippet).toBe('A snippet');
-    expect(next?.fields.get('s')).toBe('30');
-    // The submit button itself is not a form field to resubmit.
-    expect(next?.fields.has('Next')).toBe(false);
+  it('rejects a stray block returned in place of the page', () => {
+    // Both of these were handed back instead of 486KB of Zillow listings, and
+    // the larger one clears any character floor a short page could also clear.
+    expect(isPlausibleArticle(2400, 486090)).toBe(false);  // the legal footer
+    expect(isPlausibleArticle(102, 491662)).toBe(false);   // a promo block
+  });
+
+  it('keeps a short page that is mostly article', () => {
+    expect(isPlausibleArticle(300, 400)).toBe(true);
+  });
+});
+
+describe('duckduckgo parsing', () => {
+  // Shaped like the real SERP: ads are a sibling layout, the title anchor is
+  // already absolute, and a snippet's date lives in its own span.
+  const html = `<ol>
+    <li data-layout="ad"><article data-testid="result">
+      <a data-testid="result-title-a" href="https://duckduckgo.com/y.js?ad_domain=sponsor.example">Sponsored</a>
+    </article></li>
+    <li data-layout="organic"><article data-testid="result">
+      <a data-testid="result-title-a" href="https://real.example/page">Real</a>
+      <div data-result="snippet"><div><span><span>3 days ago</span><span>A snippet</span></span></div></div>
+    </article></li>
+    <li data-layout="organic"><article data-testid="result">
+      <a data-testid="result-title-a" href="https://other.example/x">Other</a>
+      <div data-result="snippet"><div><span><span>Undated text</span></span></div></div>
+    </article></li>
+    <li data-layout="organic"><article data-testid="result">
+      <a data-testid="result-title-a" href="/settings">Furniture</a>
+    </article></li>
+  </ol>`;
+
+  it('takes organic results and drops ads and DuckDuckGo\'s own links', () => {
+    const results = parseResults(html);
+    expect(results.map(r => r.url)).toEqual(['https://real.example/page', 'https://other.example/x']);
+    expect(results.map(r => r.position)).toEqual([1, 2]);
+  });
+
+  it('separates a snippet\'s date, which otherwise runs into the text', () => {
+    const results = parseResults(html);
+    expect(results[0].snippet).toBe('3 days ago — A snippet');
+    expect(results[1].snippet).toBe('Undated text');
   });
 });

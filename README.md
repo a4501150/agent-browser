@@ -165,9 +165,43 @@ Prefer it over screenshots.
 
 **Web** — `web_search` `web_fetch` `web_crawl` `web_extract`
 
-The `web_*` tools need no `instance_id`. They try a plain HTTP request first and escalate
-to a real browser only when the response looks challenged or renders client-side, and
-they always use a throwaway profile so research traffic never touches a logged-in one.
+The `web_*` tools need no `instance_id`. They fetch through the same patched browser as
+everything else — there is no separate HTTP client, because a Node one would carry
+undici's TLS fingerprint into a project whose whole premise is that its traffic does not
+look automated. They share one throwaway-profile browser, held for a minute of inactivity
+so a search and the fetches after it are one coherent session, and thrown away with
+whatever a site left in it. It never appears in `browser_list`: nothing the agent opened.
+
+`web_fetch` returns one **self-contained markdown document** by default — the title, where
+it came from, then the article, so a result written to a file still says what it is:
+
+```markdown
+# useState – React
+
+- URL: https://react.dev/reference/react/useState
+- Status: 200
+- Content type: text/html
+
+---
+
+`useState` is a React Hook that lets you add a state variable to your component.
+```
+
+The other three formats answer different questions: `html` is the DOM after scripts have
+run, `raw` is the bytes the server sent before them, `pdf` prints the page. Anything that
+is not a web page — JSON, a feed, a sitemap, a PDF, an attachment — comes back as itself,
+from the response body rather than from `page.content()`, which would return Chromium's
+viewer markup instead of the document. On a 319 KB feed that difference is 1.79 MB.
+
+`web_search` drives the same SERP a human sees, rather than DuckDuckGo's HTML-only endpoint,
+which has no ranked answer for a `site:` query at all. Ads are excluded structurally, by the
+layout DuckDuckGo marks them with. Asking for more results than fit on one screen clicks its
+own "More results" until the engine stops giving them.
+
+A Cloudflare interstitial is waited out rather than returned: the response says
+`cf-mitigated: challenge`, Turnstile runs, and the real page arrives a few seconds later. An
+interactive checkbox or an image CAPTCHA is not solved for you — open an instance and click
+it, which works even though the widget is in a cross-origin iframe.
 
 ## Profiles
 
@@ -245,8 +279,8 @@ message). See "Releasing the browser binary" in [CLAUDE.md](CLAUDE.md).
 Built on [Playwright](https://github.com/microsoft/playwright) (Apache-2.0), whose tool
 layer is vendored from tag `v1.62.1` — it already translates out-of-process iframe
 coordinates and recurses the accessibility snapshot into child frames, which is the
-entire reason it was chosen. The DuckDuckGo search is ported from
-[stealth-browser-mcp](https://github.com/vibheksoni/stealth-browser-mcp) (MIT). See
-[NOTICE](NOTICE).
+entire reason it was chosen. The shape of `web_search` and `web_fetch` owes ideas to
+[stealth-browser-mcp](https://github.com/vibheksoni/stealth-browser-mcp) (MIT), though no
+implementation remains. See [NOTICE](NOTICE).
 
 Apache-2.0.

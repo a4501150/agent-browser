@@ -1,22 +1,22 @@
 /**
- * DuckDuckGo search, ported from stealth-browser-mcp's src/web_tools.py
- * (MIT): the html.duckduckgo.com endpoint, the region->kl and time_range->df
- * mapping, unwrapping the `uddg=` redirect parameter, and paginating by
- * submitting the "Next" form with a pause between pages.
- *
- * What is added: that implementation claims to return non-sponsored results but
- * only selects `.result` and requires `.result__a`, with no ad check at all.
- * Ads are rejected explicitly here rather than trusting the endpoint not to
- * serve them.
+ * DuckDuckGo search through the browser's own SERP, which is what makes a `site:`
+ * query work at all. Ads are excluded structurally: `data-layout` marks every
+ * result `organic` or `ad`.
  */
-import { httpFetch, decodeBody } from './httpFetch';
+import { setTimeout as sleep } from 'node:timers/promises';
+
 import { parseDocument } from './markdown';
-import { fetchPage } from './render';
 
 import type { ServerHost } from '../mcp/host';
 
-const endpoint = 'https://html.duckduckgo.com/html/';
-const pageGapMs = 1500;
+const endpoint = 'https://duckduckgo.com/';
+
+/** The endpoint is somebody else's; do not hammer it between batches. */
+const batchGapMs = 1200;
+const batchTimeoutMs = 10_000;
+
+const organicSelector = 'li[data-layout="organic"]';
+const moreResultsSelector = '#more-results';
 
 export type SearchResult = {
   position: number;
@@ -32,141 +32,109 @@ export type SearchOptions = {
   signal?: AbortSignal;
 };
 
-const adClasses = ['result--ad', 'result--ad-u', 'results--ads'];
-const adHosts = new Set([
-  'duckduckgo.com',
-  'www.bing.com',
-  'bing.com',
-  'r.search.yahoo.com',
-  'ad.doubleclick.net',
-  'googleadservices.com',
-  'www.googleadservices.com',
-]);
-
-export async function search(host: ServerHost, query: string, options: SearchOptions = {}): Promise<{ results: SearchResult[]; pages: number }> {
-  const count = Math.max(1, Math.min(options.count ?? 10, 100));
+export async function search(host: ServerHost, query: string, options: SearchOptions = {}): Promise<{ results: SearchResult[]; batches: number }> {
+  const count = options.count ?? 10;
   const params = new URLSearchParams({ q: query });
   if (options.region)
     params.set('kl', options.region);
   if (options.timeRange)
     params.set('df', options.timeRange);
 
-  const results: SearchResult[] = [];
-  const seen = new Set<string>();
-  let html = await loadFirstPage(host, `${endpoint}?${params}`, options.signal);
-  let pages = 0;
+  // One page held across every batch, so the cookies and tokens the endpoint
+  // hands out survive from one set of results to the next.
+  return await host.withRenderer(renderer => renderer.withPage(
+    `${endpoint}?${params}`,
+    { signal: options.signal },
+    async ({ page, settled }) => {
+      await settled();
+      // This SERP renders client-side, and `settled` is the redirect policy, not
+      // a load wait: without waiting for a result to exist, the parse below sees
+      // an empty shell and the tool reports no results for everything.
+      await page.waitForSelector(organicSelector, { timeout: batchTimeoutMs }).catch(() => {});
+      let batches = 1;
+      let loaded = await page.locator(organicSelector).count();
 
-  for (let page = 0; page < 10; page++) {
-    pages++;
-    const parsed = parseResults(html);
-    for (const result of parsed.results) {
-      if (seen.has(result.url))
-        continue;
-      seen.add(result.url);
-      results.push(result);
-    }
-    if (results.length >= count || !parsed.next)
-      break;
-    await new Promise(f => setTimeout(f, pageGapMs));
-    const response = await httpFetch(parsed.next.action, {
-      method: 'POST',
-      body: parsed.next.fields,
-      signal: options.signal,
-      headers: { referer: endpoint },
-    });
-    if (response.status >= 400)
-      break;
-    html = decodeBody(response);
-  }
+      // "More results" appends into the same document -- no navigation, so
+      // nothing here waits for one, and there is no new URL to vet either. The
+      // loop ends when the engine stops giving more, not at a batch count of
+      // ours: `count` is what the caller asked for and the only thing bounding it.
+      while (loaded && loaded < count) {
+        const more = page.locator(moreResultsSelector);
+        if (!await more.isVisible().catch(() => false))
+          break;
+        await sleep(batchGapMs, { signal: options.signal });
+        await more.click({ timeout: batchTimeoutMs });
+        const grown = await page
+          .waitForFunction(
+            ([selector, seen]) => document.querySelectorAll(selector as string).length > (seen as number),
+            [organicSelector, loaded] as const,
+            { timeout: batchTimeoutMs })
+          .then(() => true)
+          .catch(() => false);
+        if (!grown)
+          break;
+        batches++;
+        loaded = await page.locator(organicSelector).count();
+      }
 
-  return {
-    results: results.slice(0, count).map((result, index) => ({ ...result, position: index + 1 })),
-    pages,
-  };
+      // Already numbered from one, and a prefix of that is still numbered from one.
+      return { results: parseResults(await page.content()).slice(0, count), batches };
+    },
+  ));
 }
 
-async function loadFirstPage(host: ServerHost, url: string, signal: AbortSignal | undefined): Promise<string> {
-  const response = await httpFetch(url, { signal, headers: { referer: 'https://duckduckgo.com/' } });
-  const html = decodeBody(response);
-  if (response.status < 400 && /class="result/.test(html))
-    return html;
-  // The endpoint is rate-limiting or challenging us; fall back to a real browser.
-  const rendered = await fetchPage(host, url, { render: 'always', signal });
-  return rendered.html;
-}
-
-type NextForm = { action: string; fields: URLSearchParams };
-
-export function parseResults(html: string): { results: SearchResult[]; next: NextForm | undefined } {
+export function parseResults(html: string): SearchResult[] {
   const { document } = parseDocument(html, endpoint);
   const results: SearchResult[] = [];
+  const seen = new Set<string>();
 
-  for (const element of document.querySelectorAll('.result')) {
-    if (isAd(element))
+  for (const item of document.querySelectorAll(organicSelector)) {
+    const anchor = item.querySelector('[data-testid="result-title-a"]');
+    // Already absolute on this SERP, and `parseDocument` would have absolutized
+    // it anyway -- which is also what turns DuckDuckGo's own relative ad and
+    // navigation links into something the host check below can reject.
+    const url = anchor?.getAttribute('href') ?? '';
+    if (!isOffsite(url) || seen.has(url))
       continue;
-    const anchor = element.querySelector('.result__a');
-    if (!anchor)
-      continue;
-    const url = unwrapRedirect(anchor.getAttribute('href') || '');
-    if (!url || !/^https?:/i.test(url))
-      continue;
-    let hostname: string;
-    try {
-      hostname = new URL(url).hostname;
-    } catch {
-      continue;
-    }
-    if (adHosts.has(hostname))
-      continue;
+    seen.add(url);
     results.push({
       position: results.length + 1,
-      title: (anchor.textContent ?? '').replace(/\s+/g, ' ').trim(),
+      title: collapse(anchor?.textContent),
       url,
-      snippet: (element.querySelector('.result__snippet')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+      snippet: snippetOf(item),
     });
   }
 
-  return { results, next: findNextForm(document) };
+  return results;
 }
 
-function isAd(element: Element): boolean {
-  const className = element.getAttribute('class') ?? '';
-  if (adClasses.some(cls => className.split(/\s+/).includes(cls)))
-    return true;
-  if (element.closest('.results--ads'))
-    return true;
-  // DuckDuckGo labels sponsored blocks in the badge next to the URL.
-  const badge = element.querySelector('.badge--ad, .result__type');
-  if (badge && /^\s*ad\b|sponsored/i.test(badge.textContent ?? ''))
-    return true;
-  return false;
+function collapse(text: string | null | undefined): string {
+  return (text ?? '').replace(/\s+/g, ' ').trim();
 }
 
-/** Real URLs hide behind `/l/?uddg=<encoded>`. */
-function unwrapRedirect(href: string): string {
-  if (!href.includes('uddg='))
-    return href.startsWith('//') ? `https:${href}` : href;
+/** A result has to point somewhere else; DuckDuckGo's own links are furniture. */
+function isOffsite(url: string): boolean {
   try {
-    const parsed = new URL(href, endpoint);
-    return decodeURIComponent(parsed.searchParams.get('uddg') || href);
+    const { protocol, hostname } = new URL(url);
+    return /^https?:$/.test(protocol) && hostname !== 'duckduckgo.com' && !hostname.endsWith('.duckduckgo.com');
   } catch {
-    return href;
+    return false;
   }
 }
 
-function findNextForm(document: Document): NextForm | undefined {
-  const input = [...document.querySelectorAll('input[value="Next"], input.btn--alt')]
-    .find(el => (el.getAttribute('value') ?? '').trim() === 'Next');
-  const form = input?.closest('form');
-  if (!form)
-    return undefined;
-  const fields = new URLSearchParams();
-  for (const field of form.querySelectorAll('input[name]')) {
-    const name = field.getAttribute('name')!;
-    if (field.getAttribute('type') === 'submit')
-      continue;
-    fields.set(name, field.getAttribute('value') ?? '');
-  }
-  const action = new URL(form.getAttribute('action') || endpoint, endpoint).toString();
-  return { action, fields };
+/**
+ * A snippet is sometimes prefixed by a relative date in its own span, and the
+ * two run together in `textContent` ("3 days agoStable release date:"). Two
+ * element children mean that has happened; anything else falls back to the
+ * whole text, which is also the graceful answer if the markup changes.
+ */
+function snippetOf(item: Element): string {
+  const snippet = item.querySelector('[data-result="snippet"]');
+  if (!snippet)
+    return '';
+  const clamp = snippet.querySelector('span');
+  const parts = clamp ? [...clamp.children] : [];
+  if (parts.length < 2)
+    return collapse(snippet.textContent);
+  return parts.map(part => collapse(part.textContent)).filter(Boolean).join(' — ');
 }

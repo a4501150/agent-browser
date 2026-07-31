@@ -1,0 +1,9 @@
+Plain text, served as text/plain.
+
+Chromium wraps a document like this in its own preformatted-text viewer, so
+anything reading it through page.content() gets markup the server never sent.
+The bytes below are the assertion: they must come back exactly as they are.
+
+  indented line, two spaces
+	a tab
+  "quoted" & ampersanded <angled>

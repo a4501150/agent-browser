@@ -18,7 +18,7 @@ const waitFor = defineTabTool({
       target: z.string().optional().describe('Wait until this element is visible. A ref from the page outline, a CSS selector, or an XPath.'),
       text: z.string().optional().describe('Wait until this text is visible.'),
       text_gone: z.string().optional().describe('Wait until this text is no longer visible.'),
-      time: z.number().positive().optional().describe('Sleep this many seconds, whatever the page does. Capped at 30; for an operation that takes minutes, wait on a condition with a long timeout instead of repeating this.'),
+      time: z.number().positive().optional().describe('Sleep this many seconds, whatever the page does. For an operation that takes minutes, prefer waiting on a condition with a long timeout.'),
       timeout: z.number().int().positive().optional().describe('How long to wait in milliseconds for each condition before failing. Not capped. Defaults to the action timeout.'),
     }),
     type: 'readOnly',
@@ -31,7 +31,7 @@ const waitFor = defineTabTool({
     const timeoutOptions = params.timeout ? { timeout: params.timeout } : tab.actionTimeoutOptions;
 
     if (params.time) {
-      const ms = Math.min(30_000, params.time * 1000);
+      const ms = params.time * 1000;
       response.addCode(`await page.waitForTimeout(${ms});`);
       await new Promise(f => setTimeout(f, ms));
     }

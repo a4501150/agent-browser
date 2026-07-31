@@ -50,7 +50,7 @@ function pageRunner(payload: Payload): Promise<Outcome> {
         nodeName: el.nodeName,
         id: el.id || undefined,
         className: (typeof el.className === 'string' && el.className) || undefined,
-        text: (el.textContent || '').trim().slice(0, 200) || undefined,
+        text: (el.textContent || '').trim() || undefined,
       };
     }
     if (depth >= maxDepth)
@@ -60,13 +60,13 @@ function pageRunner(payload: Payload): Promise<Outcome> {
     seen.add(value);
     try {
       if (Array.isArray(value))
-        return value.slice(0, 1000).map(v => serialize(v, seen, depth + 1));
+        return value.map(v => serialize(v, seen, depth + 1));
       if (value instanceof Map)
-        return { __type: 'Map', entries: [...value.entries()].slice(0, 1000).map(([k, v]) => [serialize(k, seen, depth + 1), serialize(v, seen, depth + 1)]) };
+        return { __type: 'Map', entries: [...value.entries()].map(([k, v]) => [serialize(k, seen, depth + 1), serialize(v, seen, depth + 1)]) };
       if (value instanceof Set)
-        return { __type: 'Set', values: [...value.values()].slice(0, 1000).map(v => serialize(v, seen, depth + 1)) };
+        return { __type: 'Set', values: [...value.values()].map(v => serialize(v, seen, depth + 1)) };
       if (ArrayBuffer.isView(value))
-        return { __type: value.constructor.name, values: Array.from(value as any).slice(0, 1000) };
+        return { __type: value.constructor.name, values: Array.from(value as any) };
       const out: Record<string, any> = {};
       for (const key of Object.keys(value)) {
         try {

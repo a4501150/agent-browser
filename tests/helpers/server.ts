@@ -3,6 +3,8 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { getMimeTypeForPath } from '../../src/vendor/mimeType';
+
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
 
 export type Fixtures = {
@@ -25,8 +27,8 @@ export type Fixtures = {
 export async function startFixtures(): Promise<Fixtures> {
   let port = 0;
   const server = http.createServer((req, res) => {
-    const requested = (req.url ?? '/').split('?')[0];
-    const name = requested === '/' ? 'page.html' : requested.replace(/^\/+/, '');
+    const requested = new URL(req.url ?? '/', 'http://fixtures');
+    const name = requested.pathname === '/' ? 'page.html' : requested.pathname.replace(/^\/+/, '');
     const file = path.join(fixtures, name);
     if (!file.startsWith(fixtures)) {
       res.writeHead(403).end('no');
@@ -42,7 +44,14 @@ export async function startFixtures(): Promise<Fixtures> {
     // The sitemap has to name the port it is being served on.
     if (file.endsWith('.xml'))
       body = Buffer.from(body.toString('utf-8').replaceAll('PORT', String(port)));
-    res.writeHead(200, { 'content-type': contentType(file) });
+    const headers: Record<string, string> = { 'content-type': contentType(file) };
+    // ?attachment turns any fixture into a download, which aborts the
+    // navigation rather than producing a document.
+    if (requested.searchParams.has('attachment')) {
+      headers['content-type'] = 'application/octet-stream';
+      headers['content-disposition'] = `attachment; filename="${path.basename(file)}"`;
+    }
+    res.writeHead(200, headers);
     res.end(body);
   });
 
@@ -61,9 +70,8 @@ export async function startFixtures(): Promise<Fixtures> {
 }
 
 function contentType(file: string): string {
-  if (file.endsWith('.xml'))
-    return 'application/xml';
-  if (file.endsWith('.json'))
-    return 'application/json';
-  return 'text/html';
+  // The decoding path needs an explicitly declared charset to exercise.
+  if (file.endsWith('.txt'))
+    return 'text/plain; charset=utf-8';
+  return getMimeTypeForPath(file) ?? 'text/html';
 }

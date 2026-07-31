@@ -52,6 +52,12 @@ that way so a re-sync stays a straight copy.
 
 `src/vendor/` is in the eslint ignore list. Do not reformat it.
 
+**Look in it before writing a helper.** `mimeType.ts` already answers every content-type
+question this codebase asks — `isTextualMimeType`, `isXmlMimeType`, `isJsonMimeType`,
+`getMimeTypeForPath`, `getExtensionForMimeType` — and `eventsHelper.ts` plus
+`disposable.ts` are how listeners are registered and torn down everywhere else. The web
+tier hand-rolled all of the first group once and had to be un-written.
+
 **Deliberately not vendored:** `locatorGenerators.ts` (779 lines) and `locatorParser.ts`
 (252). They exist only to parse *Playwright locator expressions* like
 `getByRole('button')`. We resolve targets ourselves in `src/browser/target.ts`, so 1,031
@@ -231,21 +237,191 @@ because Playwright drives Chromium over a pipe, so the browser dies with the ser
 the server dies with the CLI session. `--idle-timeout <s>` still opts back in, which is
 what a long-lived `serve` deployment should do.
 
-### The web tier's SSRF policy has to cover the browser path too
+### The web tier has no HTTP client, and the reasons are not the obvious ones
 
-`httpFetch` checks every redirect hop, but `page.goto` follows redirects itself, so
-`Renderer` re-checks each navigation request that has a `redirectedFrom()`. Anything that
-navigates a page for the web_* tools must go through `Renderer._withPage`; the PDF path
-originally called `page.goto` directly and accepted `file://`.
+Everything `web_*` fetches goes through the patched browser. The Node `fetch` client this
+replaced was the most detectable code in the repo — undici's TLS fingerprint under a
+hand-written `Chrome/148` UA — and it escalated to the browser only on a heuristic
+(403/429/503, nine challenge-marker strings, under 500 characters of text) that was wrong
+in both directions: `example.com` has 142 characters of text, so it escalated for a page
+that fetched perfectly, while any SSR shell with nav and footer boilerplate cleared 500
+characters and returned a plausible, wrong page labelled as a plain HTTP request. Measured
+cost of always rendering: 606–1130 ms/page against 79–325 ms.
+
+**`page.content()` is not the document unless the document is HTML.** Chromium answers
+everything else with a viewer, and the viewer's markup is what you get: a 319 KB feed reads
+as **1.79 MB** of XML-viewer markup and stylesheet, and `text/plain` and JSON come back
+`<pre>`-wrapped. `response.body()` is exact, costs 1–13 ms because it is served from the
+browser's own cache, and needs no second request. Hence the `html | text | binary` union in
+`FetchedPage`: the raw kinds exist because the rendered path lies about them.
+
+Three exceptions found the hard way:
+
+- **A PDF makes `response.body()` return the extension shell**, 536 bytes of
+  `pdf_embedder.css`, because the viewer takes over the navigation. Only an in-page
+  `fetch(location.href)` reaches the file. Do not "fix" this by disabling the PDF viewer:
+  `navigator.plugins` advertising it is a fingerprinting signal.
+- **In-page `fetch` is not a general substitute** for the same reason it looks like one. It
+  dies on a CSP-sandboxed origin — `raw.githubusercontent.com` sends `sandbox`, so the
+  document's origin is opaque and `fetch` fails outright. The two paths cover each other;
+  neither covers everything.
+- **An attachment aborts the navigation.** `page.goto` rejects with *"Download is
+  starting"* and the bytes arrive through the `download` event instead, so the listener has
+  to be armed *before* navigating, and the bytes copied out before the page closes, since
+  Playwright deletes a context's downloads with it.
+
+### The redirect SSRF check was a race the moment the waits went away
+
+`page.goto` follows redirects itself, so `Renderer` re-checks every navigation request with
+a `redirectedFrom()`. That check is asynchronous and was started with `void`, then read as
+`blocked.length` later — which only worked because the `load` and `networkidle` waits
+happened to give DNS time to resolve first. The raw path skips those waits, so the checks
+are collected in a set and awaited (`Navigation.settled`) before *anything* read from the
+page is returned. Anything that navigates for the web_* tools must go through
+`Renderer.withPage`; the PDF path originally called `page.goto` directly and accepted
+`file://`.
 
 The initial URL may be loopback or private (fetching your own dev server is legitimate); a
-*redirect target* may not, since the caller did not choose it.
+*redirect target* may not, since the caller did not choose it. Two things the listener
+cannot see, checked explicitly instead: the PDF refetch is a `fetch` rather than a
+navigation, so its final URL is validated after the fact, and a form submit would be a new
+navigation nobody named — though search no longer submits one, see below.
 
-### `withRenderer` memoises the promise, not the renderer
+### The renderer is memoised as a promise, and hidden from the agent
 
-Concurrent crawl workers would otherwise each find it unset, each launch a browser, and
-all but the last would leak. Each render also gets its own page, because a shared tab
-means concurrent navigations cancelling each other.
+`App.withRenderer` memoises the *promise*: concurrent crawl workers would otherwise each
+find it unset, each launch a browser, and all but the last would leak. Each fetch still
+gets its own page, because a shared tab means concurrent navigations cancelling each other.
+
+Three things that are easy to get wrong here:
+
+- **The idle timer must count leases, not calls.** It is armed only when the last lease is
+  released; a timer reset per call would close the browser under a crawl that legitimately
+  runs for minutes.
+- **Replacing a closed renderer has to be atomic.** The memo is cleared when the resolved
+  renderer reports `closed`, since an idle-closed one would otherwise fail every later
+  fetch — but only by the caller that still sees *its own* promise there
+  (`if (this._renderer === pending)`). Two callers clearing blindly each install a
+  replacement, and the loser's browser is then unreachable through the memo, carries
+  `idleTimeout: 0` so the reaper skips it, and lives until the server exits.
+- **`Registry.list()` must hide internal instances, not just `summaries()`.**
+  `src/mcp/http.ts` reports `instances.list().length` as the server's instance count, and
+  `get()`/`close()` hide them too so a guessed id is not a handle to our browser. Lifecycle
+  work — `closeAll`, the idle reaper, the process records — goes through `_all()` and still
+  covers it, which is what keeps orphan reaping honest.
+- **An internal instance builds no `Tab` at all.** `Instance._initialize` skips the
+  `browserContext.on('page')` subscription, so a renderer page costs none of a Tab's seven
+  listeners, awaited `page.requests()`, 2,000-entry request history, or download hook —
+  which mattered: that hook called `download.saveAs()` into an artifact path derived from
+  the *suggested filename*, i.e. exactly the path `web_fetch` was already writing, so every
+  attachment fetch had two concurrent writers racing on one file. Pinned by a lifecycle
+  test that asserts 0 tabs for an internal instance and non-zero for an agent-facing one
+  (without the flag it reports 2).
+
+The renderer's profile is `null` (throwaway) but now lives as long as the renderer rather
+than one call, so a burst of research is one coherent session while nothing a site set
+survives the idle close. A *named* profile was considered and rejected: it would accumulate
+trust, and also accumulate a bot-flag cookie that outlived every restart.
+
+### Search drives the SERP a human sees, and the reason is `site:`
+
+`html.duckduckgo.com/html/` is far cheaper to parse, and is the obvious thing to reach for
+again. It answers **`site:` queries with a no-results page** (checked against the raw
+response in three query shapes, so not a parser bug), and for "Chromium 148 stable release
+notes" it never returned `developer.chrome.com/release-notes/148` in 15 results across 2
+pages, where the JS SERP puts that page at rank 1.
+
+What the JS SERP gives:
+
+- **`li[data-layout="organic"]` versus `li[data-layout="ad"]`**, a structural ad filter.
+  Verified on "car insurance quotes": 4 ads, 10 organic, every ad a
+  `duckduckgo.com/y.js?ad_domain=` wrapper. The one URL check left is "must not be
+  duckduckgo.com", which drops the SERP's own furniture.
+- **An already-absolute href** on the title anchor.
+- **"More results" appends in place.** Clicking `#more-results` took organic results 10 →
+  25 with the URL unchanged and no navigation, so nothing waits for one and there is no
+  form action to vet.
+- `kl=` and `df=` work.
+
+**The trap:** this SERP renders client-side, and `Navigation.settled` is the redirect policy,
+*not* a load wait. Parsing straight after it returns an empty shell, and the tool then
+reports "No results" for every query — which is exactly what the first live run did. The
+search path waits on the result selector itself. `fetchPage`'s HTML branch was unaffected
+because it calls `settle()`, which is a different function with a confusingly similar name.
+
+### A Cloudflare interstitial resolves itself if you let it
+
+Cloudflare answers with 403 and the header **`cf-mitigated: challenge`**, runs Turnstile in
+the page, then re-navigates to the same URL **by POST** and serves the real document.
+Measured on crunchbase.com: ~6 s, and 5 s end-to-end through `web_fetch` afterwards. So the
+fix was to wait, not to solve anything — the header is the signal (exact value; other
+mitigations are blocks, where waiting is pointless), and `lastResponse` is what to read
+afterwards, not what `goto` returned.
+
+Two consequences worth keeping straight:
+
+- `lastResponse` had to be narrowed to main-frame **navigation** responses. Every
+  subresource the main frame loads also reports that frame, so the old test would have left
+  it pointing at whichever stylesheet arrived last.
+- The interactive variants — a Turnstile checkbox, an image CAPTCHA — are deliberately not
+  handled by `web_*`. The answer there is `browser_open` and a click on the frame-prefixed
+  ref, which is the thing this repo is uniquely good at. No solver service: a research tool
+  must not quietly ship page content to a paid API.
+
+### Readability can succeed and still be wrong by three orders of magnitude
+
+It reports no confidence, so the only signal is how much of the page's text it kept.
+Measured against saved DOM:
+
+| Page | article / page | share | verdict |
+|---|---|---|---|
+| github README | 7,458 / 128,619 | **5.8%** | content — the low legitimate bound |
+| MDN `fetch` | 4,412 / 24,945 | 17.7% | content |
+| Chrome release notes | 20,287 / 46,077 | 44.0% | content |
+| Wikipedia | 44,091 / 67,926 | 64.9% | content |
+| Hacker News | 3,713 / 3,941 | 94.2% | content |
+| Zillow listings | 2,400 / 486,090 | **0.5%** | the legal footer |
+| Zillow listings | 102 / 491,662 | **0.02%** | a "see commute times" promo |
+
+Both Zillow answers were returned *instead of* 486 KB of prices. `charThreshold` is not the
+lever — 250 and 500 gave the same 102 characters. A character minimum cannot separate these
+either: the footer clears any floor low enough to let a genuinely short page through. So the
+share is the whole test (2%), and a short page is safe because it is also mostly article.
+With the guard, that Zillow URL returns 54 KB of markdown containing the real prices.
+
+Do not try to build a fixture that reproduces this. Readability handles flat synthetic
+pages correctly; a fixture tuned until it misbehaves would pin *its* internals, not our
+rule. The measured pairs are unit-tested directly as the specification.
+
+### Limits are the agent's to choose, unless they are physics
+
+A cap the agent cannot see, cannot change, and that silently makes its request mean
+something else is a bug, not safety. Removed on those grounds: search's 10-batch ceiling and
+100-result clamp (a `count` of 150 now returns 150 across 11 batches — both old limits bit),
+the crawler's 10,000-URL `maxDiscovered` and its concurrency clamp, `web_crawl`'s 500-page
+schema maximum, `browser_wait_for` silently halving an explicit 60 s to 30 s, and
+`browser_run_javascript`'s unmarked `slice(0, 1000)` / `slice(0, 200)` on returned data.
+
+The artifacts directory's 256 MB quota went for a sharper reason than the rest: it evicted
+oldest-first, so a long crawl could silently delete the earlier result file the agent had
+already been told to read. Age-based expiry is what remains, and it is also what let the
+in-flight `_protected` set go — nothing written a moment ago can be a week old, so the set
+had no cases left to protect against.
+
+What stays, because it is a property of the process rather than a browsing decision:
+timeouts (a tool call must terminate, and the ones that matter are overridable — `web_fetch`
+takes `timeout`), `inlineResultLimit` (inline versus file, nothing lost), `maxTrackedRequests`
+and the artifacts TTL and the idle reapers (a server that lives for hours must not grow
+without bound), and `maxConcurrentPages` — which **queues rather than refusing**, so it
+never changes what the agent gets, only how many Chromium pages exist at once. That last one
+is what made removing the crawler's concurrency cap safe.
+
+There is no byte cap on a fetch at all any more. `response.body()` reads from Chromium's
+cache, so the bytes were already downloaded and a cap never prevented the fetch — only the
+Node copy. CDP `Fetch.takeResponseBodyAsStream` could abort mid-download, but only via
+response-stage interception that makes the request non-continuable, which collides with the
+redirect checks and the challenge retry. Past Node's max buffer length a huge body throws a
+`RangeError`, so the failure is a tool error rather than a dead server.
 
 ## Design rules
 
@@ -282,7 +458,8 @@ re-sync is mechanical.
 
 **wigolo is AGPL-3.0-only. Do not copy any of its code.** Doing so would force this
 project to be AGPL *and* to offer source to users of any network service built on it. Its
-ideas (HTTP-first with browser escalation) are reimplemented from scratch.
+HTTP-first-with-escalation idea was reimplemented from scratch and has since been deleted
+on its merits, so nothing of it remains to re-derive.
 
 ## Verification
 

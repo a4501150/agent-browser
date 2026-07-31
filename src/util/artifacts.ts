@@ -19,20 +19,12 @@ const sweepIntervalMs = 60_000;
 
 export class Artifacts {
   readonly dir: string;
-  private _maxBytes: number;
   private _ttlMs: number;
-  /**
-   * Files written by the response currently being built. They are exempt from
-   * eviction only until the next sweep, because a set of "never evict" paths
-   * would grow for the lifetime of the process and make the quota meaningless.
-   */
-  private _protected = new Set<string>();
   private _sweeping: Promise<void> | undefined;
   private _lastSweep = 0;
 
-  constructor(dir: string, options?: { maxBytes?: number; ttlMs?: number }) {
+  constructor(dir: string, options?: { ttlMs?: number }) {
     this.dir = dir;
-    this._maxBytes = options?.maxBytes ?? 256 * 1024 * 1024;
     this._ttlMs = options?.ttlMs ?? 7 * 24 * 60 * 60 * 1000;
   }
 
@@ -57,7 +49,6 @@ export class Artifacts {
       await fs.promises.writeFile(file, data, 'utf-8');
     else
       await fs.promises.writeFile(file, data);
-    this._protected.add(path.resolve(file));
   }
 
   /**
@@ -77,41 +68,18 @@ export class Artifacts {
     return this._sweeping;
   }
 
-  /** Drop expired files, then oldest-first until the directory fits the quota. */
+  /** Drop expired files. */
   private async _sweep(): Promise<void> {
-    const keep = this._protected;
-    this._protected = new Set();
-    let entries: { path: string; size: number; mtimeMs: number }[];
+    let entries: { path: string; mtimeMs: number }[];
     try {
       entries = await listFilesRecursive(this.dir);
     } catch {
       return;
     }
     const now = Date.now();
-    const survivors: typeof entries = [];
-    let total = 0;
     for (const entry of entries) {
-      if (!keep.has(entry.path) && now - entry.mtimeMs > this._ttlMs) {
+      if (now - entry.mtimeMs > this._ttlMs)
         await fs.promises.unlink(entry.path).catch(() => {});
-        continue;
-      }
-      survivors.push(entry);
-      total += entry.size;
-    }
-    if (total <= this._maxBytes)
-      return;
-    survivors.sort((a, b) => a.mtimeMs - b.mtimeMs);
-    for (const entry of survivors) {
-      if (total <= this._maxBytes)
-        break;
-      if (keep.has(entry.path))
-        continue;
-      try {
-        await fs.promises.unlink(entry.path);
-        total -= entry.size;
-      } catch {
-        // Racing another sweep is fine.
-      }
     }
   }
 }
@@ -136,12 +104,12 @@ export function sanitizeForFilePath(s: string): string {
   return sanitize(s.substring(0, separator)) + '.' + sanitize(s.substring(separator + 1));
 }
 
-async function listFilesRecursive(dir: string): Promise<{ path: string; size: number; mtimeMs: number }[]> {
+async function listFilesRecursive(dir: string): Promise<{ path: string; mtimeMs: number }[]> {
   const entries = await fs.promises.readdir(dir, { recursive: true, withFileTypes: true });
   const files = entries.filter(e => e.isFile());
   return Promise.all(files.map(async e => {
     const full = path.join(e.parentPath, e.name);
-    const { size, mtimeMs } = await fs.promises.stat(full);
-    return { path: full, size, mtimeMs };
+    const { mtimeMs } = await fs.promises.stat(full);
+    return { path: full, mtimeMs };
   }));
 }

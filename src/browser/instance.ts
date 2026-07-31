@@ -50,6 +50,8 @@ export class Instance implements ResponseHost {
   readonly createdAt = Date.now();
   readonly idleTimeout: number | undefined;
   readonly headless: boolean;
+  /** Ours, not the agent's: the renderer behind the web_* tools. */
+  readonly internal: boolean;
 
   lastActivity = Date.now();
 
@@ -71,6 +73,7 @@ export class Instance implements ResponseHost {
     profileName: string | null;
     headless: boolean;
     idleTimeout: number | undefined;
+    internal: boolean;
     onClosed: (instance: Instance) => void;
   }) {
     this.id = args.id;
@@ -81,6 +84,7 @@ export class Instance implements ResponseHost {
     this.profileName = args.profileName;
     this.headless = args.headless;
     this.idleTimeout = args.idleTimeout;
+    this.internal = args.internal;
     this._onClosed = args.onClosed;
   }
 
@@ -91,6 +95,8 @@ export class Instance implements ResponseHost {
     executablePath: string;
     dataDirConfig: import('../config').Config;
     options: OpenOptions;
+    /** Separate from `options`, which stays about launch behaviour alone. */
+    internal: boolean;
     onClosed: (instance: Instance) => void;
   }): Promise<Instance> {
     const { options } = args;
@@ -142,6 +148,7 @@ export class Instance implements ResponseHost {
       profileName: options.userDataDir ? null : (options.profile === null ? null : (options.profile || 'default')),
       headless,
       idleTimeout: options.idleTimeout,
+      internal: args.internal,
       onClosed: args.onClosed,
     });
     await instance._initialize();
@@ -149,9 +156,17 @@ export class Instance implements ResponseHost {
   }
 
   private async _initialize() {
-    for (const page of this._browserContext.pages())
-      this._onPageCreated(page);
-    this._disposables.push(eventsHelper.addEventListener(this._browserContext, 'page', page => this._onPageCreated(page)));
+    // The renderer drives raw pages through the context and never asks for a
+    // Tab, so building one per page would only cost seven listeners, an awaited
+    // request history and a download-to-artifact hook -- that last one writing
+    // every web_fetch attachment a second time. A crawl opens hundreds of these.
+    // Nothing can reach newTab/ensureTab on an internal instance, because every
+    // tool path goes through Registry.get(), which hides them.
+    if (!this.internal) {
+      for (const page of this._browserContext.pages())
+        this._onPageCreated(page);
+      this._disposables.push(eventsHelper.addEventListener(this._browserContext, 'page', page => this._onPageCreated(page)));
+    }
     this._browserContext.once('close', () => { void this.close(); });
   }
 

@@ -25,6 +25,14 @@ type ProcessRecord = {
   ephemeral: boolean;
 };
 
+/**
+ * `internal` instances are ours, not the agent's: the renderer behind the web_*
+ * tools. They stay here so the orphan bookkeeping still covers them, but they are
+ * absent from every public view, since an instance nobody opened is one nobody
+ * can be expected to reason about.
+ */
+export type RegistryOpenOptions = OpenOptions & { internal?: boolean };
+
 type InstanceSummary = {
   instance_id: string;
   profile: string | null;
@@ -41,6 +49,7 @@ export class Registry {
   private _config: Config;
   private _artifacts: Artifacts;
   private _instances = new Map<string, Instance>();
+  private _internal = new Set<string>();
   private _reaper: NodeJS.Timeout | undefined;
   private _binary: Promise<string> | undefined;
 
@@ -49,7 +58,7 @@ export class Registry {
     this._artifacts = artifacts;
   }
 
-  async open(options: OpenOptions): Promise<Instance> {
+  async open(options: RegistryOpenOptions): Promise<Instance> {
     this._binary ??= resolveBinary(this._config);
     let executablePath: string;
     try {
@@ -68,18 +77,22 @@ export class Registry {
       executablePath,
       dataDirConfig: this._config,
       options,
+      internal: !!options.internal,
       onClosed: closed => {
         this._instances.delete(closed.id);
+        this._internal.delete(closed.id);
         void this._forgetProcess(closed.userDataDir);
       },
     });
     this._instances.set(id, instance);
+    if (options.internal)
+      this._internal.add(id);
     await this._rememberProcess(instance);
     return instance;
   }
 
   get(id: string): Instance {
-    const instance = this._instances.get(id);
+    const instance = this._internal.has(id) ? undefined : this._instances.get(id);
     if (!instance)
       throw new Error(`No browser instance "${id}". Open one with browser_open, or list the live ones with browser_list.`);
     if (instance.closed)
@@ -89,6 +102,11 @@ export class Registry {
   }
 
   list(): Instance[] {
+    return this._all().filter(instance => !this._internal.has(instance.id));
+  }
+
+  /** Every instance, ours included. For lifecycle work only. */
+  private _all(): Instance[] {
     return [...this._instances.values()];
   }
 
@@ -107,14 +125,14 @@ export class Registry {
   }
 
   async close(id: string): Promise<void> {
-    const instance = this._instances.get(id);
+    const instance = this._internal.has(id) ? undefined : this._instances.get(id);
     if (!instance)
       throw new Error(`No browser instance "${id}".`);
     await instance.close();
   }
 
   async closeAll(): Promise<void> {
-    await Promise.all(this.list().map(instance => instance.close().catch(() => {})));
+    await Promise.all(this._all().map(instance => instance.close().catch(() => {})));
   }
 
   startReaper() {
@@ -134,7 +152,7 @@ export class Registry {
 
   private async _reap() {
     const now = Date.now();
-    for (const instance of this.list()) {
+    for (const instance of this._all()) {
       const timeout = instance.idleTimeout ?? this._config.idleTimeout;
       if (!timeout)
         continue;

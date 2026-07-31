@@ -8,9 +8,11 @@ export type Article = {
   /** The article HTML if Readability found one, otherwise the whole body. */
   html: string;
   text: string;
-  /** True when Readability declined, so `html` is the unreduced document. */
+  /** True when Readability declined or was disbelieved, so `html` is the unreduced document. */
   wholeDocument: boolean;
 };
+
+export type Link = { url: string; text: string };
 
 type ParsedDocument = {
   document: Document;
@@ -64,18 +66,56 @@ function absolutizeUrls(document: any, url: string): void {
 }
 
 /**
- * Readability mutates the document it is given, so the fallback content has to
- * be read out *before* it runs rather than from a second parse of the same
- * HTML -- parsing a large page twice is the most expensive thing in this file.
+ * Whether to believe Readability's extraction. It reports no confidence of its
+ * own, and the one signal that separates a real extraction from a stray block is
+ * how much of the page's text it kept. Measured against saved DOM:
+ *
+ *   github README     7,458 / 128,619   5.8%   content -- the low legitimate bound
+ *   MDN fetch         4,412 /  24,945  17.7%   content
+ *   Chrome notes     20,287 /  46,077  44.0%   content
+ *   Wikipedia        44,091 /  67,926  64.9%   content
+ *   Hacker News       3,713 /   3,941  94.2%   content
+ *   Zillow listings   2,400 / 486,090   0.5%   the legal footer
+ *   Zillow listings     102 / 491,662   0.02%  a "see commute times" promo
+ *
+ * Both Zillow answers came back in place of 486KB of prices. A character
+ * minimum cannot separate these -- the footer clears any floor low enough to let
+ * a genuinely short page through -- so the share is the whole test, and a short
+ * page is safe because it is also mostly article.
+ *
+ * `charThreshold` is not the lever: 250 and 500 both gave the same 102.
  */
+const minArticleShare = 0.02;
+
+export function isPlausibleArticle(articleChars: number, pageChars: number): boolean {
+  return articleChars >= pageChars * minArticleShare;
+}
+
+/**
+ * Readability mutates the document it is given, so anything else that needs the
+ * original -- the fallback content, the links -- has to be read out *before* it
+ * runs rather than from a second parse of the same HTML. Parsing a large page
+ * twice is the most expensive thing in this file: 24-40ms for 585KB.
+ */
+export function readPage(html: string, url: string): { article: Article; links: Link[] } {
+  const { document, title } = parseDocument(html, url);
+  const links = collectLinks(document);
+  return { article: articleOf(document, title), links };
+}
+
 export function extractArticle(html: string, url: string): Article {
   const { document, title } = parseDocument(html, url);
+  return articleOf(document, title);
+}
+
+function articleOf(document: Document, title: string | undefined): Article {
   const body = (document.body ?? document) as any;
+  const text = (body.textContent ?? '').replace(/\n{3,}/g, '\n\n').trim();
   const fallback = {
     title,
     byline: undefined,
     html: body.innerHTML ?? '',
-    text: (body.textContent ?? '').replace(/\n{3,}/g, '\n\n').trim(),
+    text,
     wholeDocument: true as const,
   };
 
@@ -88,11 +128,15 @@ export function extractArticle(html: string, url: string): Article {
   if (!parsed?.content)
     return fallback;
 
+  const extracted = (parsed.textContent || '').trim();
+  if (!isPlausibleArticle(extracted.length, text.length))
+    return fallback;
+
   return {
     title: parsed.title || title,
     byline: parsed.byline || undefined,
     html: parsed.content,
-    text: (parsed.textContent || '').trim(),
+    text: extracted,
     wholeDocument: false,
   };
 }
@@ -175,10 +219,14 @@ export function htmlToMarkdown(html: string): string {
   return turndownService().turndown(html).replace(/\n{3,}/g, '\n\n').trim();
 }
 
-export function extractLinks(html: string, url: string): { url: string; text: string }[] {
-  const { document } = parseDocument(html, url);
+export function extractLinks(html: string, url: string): Link[] {
+  return collectLinks(parseDocument(html, url).document);
+}
+
+/** Takes a document rather than HTML, so a caller that has one need not reparse. */
+export function collectLinks(document: Document): Link[] {
   const seen = new Set<string>();
-  const links: { url: string; text: string }[] = [];
+  const links: Link[] = [];
   for (const anchor of document.querySelectorAll('a[href]')) {
     const href = anchor.getAttribute('href');
     if (!href || !/^https?:/i.test(href))

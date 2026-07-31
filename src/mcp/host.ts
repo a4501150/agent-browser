@@ -1,6 +1,7 @@
 import type { Artifacts } from '../util/artifacts';
 import type { Tab } from '../browser/tab';
 import type { Registry } from '../browser/registry';
+import type { Renderer } from '../web/render';
 
 export type ConsoleLevel = 'error' | 'warning' | 'info' | 'debug';
 
@@ -29,4 +30,10 @@ export interface ResponseHost {
 /** What a global tool (browser_open, browser_list, web_*) receives. */
 export interface ServerHost extends ResponseHost {
   readonly instances: Registry;
+
+  /**
+   * Borrow the shared browser the web_* tools fetch through. A lease rather
+   * than a getter, so the host can tell when nothing is using it any more.
+   */
+  withRenderer<T>(use: (renderer: Renderer) => Promise<T>): Promise<T>;
 }

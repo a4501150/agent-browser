@@ -3,6 +3,9 @@
  * no internet. The live DuckDuckGo path is opt-in via AGENT_BROWSER_LIVE=1,
  * because a search engine is not a fixture.
  */
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { startHarness } from './helpers/client';
@@ -25,47 +28,85 @@ afterAll(async () => {
 });
 
 describe('web_fetch', () => {
-  it('returns markdown with a real table and absolute links, without opening a browser', async () => {
+  it('returns one self-contained markdown document, with a real table and absolute links', async () => {
     const result = await harness.call('web_fetch', { url: fixtures.url('page.html') });
     expect(result.isError, result.text).toBe(false);
-    expect(result.text).toContain('Fetched with: a plain HTTP request');
     const body = result.section('Result')!;
+    // Provenance travels *with* the content, so a document written to a file
+    // still says what it is and where it came from.
+    expect(body).toContain('# Fixture headline');
+    expect(body).toContain(`- URL: ${fixtures.url('page.html')}`);
+    expect(body).toContain('- Status: 200');
+    expect(body).toContain('- Content type: text/html');
     expect(body).toContain('| Name | Value |');
     expect(body).toContain('| --- | --- |');
     // The fixture's link is written as ../relative/target.html.
     expect(body).toContain('/relative/target.html');
     expect(body).not.toContain('](../');
-    // No instance was left running by a plain fetch.
+    // The browser the web tools fetch through is ours, not the agent's.
     expect((await harness.call('browser_list', {})).section('Result')).toMatch(/No browser instances are open/);
   });
 
-  it('returns plain text and raw html on request', async () => {
-    const text = await harness.call('web_fetch', { url: fixtures.url('page.html'), format: 'text' });
-    expect(text.section('Result')).toContain('reasonably long paragraph');
-    expect(text.section('Result')).not.toContain('<p>');
+  it('separates raw from html: one is the source, the other the DOM after scripts', async () => {
+    const raw = await harness.call('web_fetch', { url: fixtures.url('spa.html'), format: 'raw' });
+    expect(raw.isError, raw.text).toBe(false);
+    // The heading exists only as a string inside the script until it runs.
+    expect(raw.section('Result')).toContain('<div id="root"></div>');
+    expect(raw.section('Result')).not.toContain('<h1>Rendered heading</h1>');
 
-    const html = await harness.call('web_fetch', { url: fixtures.url('page.html'), format: 'html' });
-    expect(html.section('Result')).toContain('<title>Fixture page</title>');
+    const html = await harness.call('web_fetch', { url: fixtures.url('spa.html'), format: 'html' });
+    expect(html.section('Result')).toContain('<h1>Rendered heading</h1>');
   });
 
-  it('escalates to a real browser for a page that renders client-side', async () => {
+  it('renders a client-side page into markdown', async () => {
     const result = await harness.call('web_fetch', { url: fixtures.url('spa.html') });
     expect(result.isError, result.text).toBe(false);
-    expect(result.text).toContain('Fetched with: a real browser');
-    expect(result.text).toMatch(/characters of text, so the page probably renders client-side/);
     expect(result.section('Result')).toContain('Rendered heading');
   });
 
-  it('does not escalate when render is never', async () => {
-    const result = await harness.call('web_fetch', { url: fixtures.url('spa.html'), render: 'never' });
-    expect(result.text).toContain('Fetched with: a plain HTTP request');
-    expect(result.section('Result') ?? '').not.toContain('Rendered heading');
+  it('returns text/plain as itself, not wrapped in Chromium\'s pre viewer', async () => {
+    const result = await harness.call('web_fetch', { url: fixtures.url('notes.txt') });
+    expect(result.isError, result.text).toBe(false);
+    expect(result.text).toContain('- Content type: text/plain');
+    const body = result.section('Result')!;
+    expect(body).toContain('  indented line, two spaces');
+    expect(body).toContain('"quoted" & ampersanded <angled>');
+    expect(body).not.toContain('<pre');
   });
 
-  it('uses a browser when render is always, and says why', async () => {
-    const result = await harness.call('web_fetch', { url: fixtures.url('page.html'), render: 'always' });
-    expect(result.text).toContain('Fetched with: a real browser');
-    expect(result.text).toContain('render: "always"');
+  it('returns json byte-exact', async () => {
+    const result = await harness.call('web_fetch', { url: fixtures.url('data.json') });
+    const body = result.section('Result')!;
+    expect(body).toContain('- Content type: application/json');
+    const json = body.slice(body.indexOf('{'));
+    expect(JSON.parse(json)).toMatchObject({ name: 'fixture', unicode: 'caf\u00e9 \u2014 na\u00efve' });
+  });
+
+  it('returns xml as the document, not as Chromium\'s xml viewer', async () => {
+    const result = await harness.call('web_fetch', { url: fixtures.url('sitemap.xml') });
+    const body = result.section('Result')!;
+    expect(body).toContain('<urlset');
+    // The viewer injects its own stylesheet and would multiply the payload.
+    expect(body).not.toContain('xml-viewer-style');
+    expect(body).not.toContain('This XML file does not appear');
+  });
+
+  it('returns the pdf itself, not the viewer shell that answers the navigation', async () => {
+    const result = await harness.call('web_fetch', { url: fixtures.url('doc.pdf') });
+    expect(result.isError, result.text).toBe(false);
+    expect(result.text).toContain('- Content type: application/pdf');
+    const file = /\((\/[^)]+\.pdf)\)/.exec(result.text)?.[1];
+    expect(file, result.text).toBeTruthy();
+    expect(fs.readFileSync(file!).subarray(0, 5).toString()).toBe('%PDF-');
+  });
+
+  it('saves an attachment, which aborts the navigation instead of rendering', async () => {
+    const result = await harness.call('web_fetch', { url: `${fixtures.url('doc.pdf')}?attachment` });
+    expect(result.isError, result.text).toBe(false);
+    const file = /\((\/[^)]+)\)/.exec(result.text)?.[1];
+    expect(file, result.text).toBeTruthy();
+    expect(path.basename(file!)).toContain('doc.pdf');
+    expect(fs.readFileSync(file!).subarray(0, 5).toString()).toBe('%PDF-');
   });
 
   it('lists links when asked', async () => {
@@ -101,22 +142,39 @@ describe('web_fetch', () => {
     }
   });
 
-  it('runs concurrent browser-rendered fetches without leaking browsers', async () => {
-    const before = (await harness.call('browser_list', {})).section('Result');
-    expect(before).toMatch(/No browser instances are open/);
+  it('runs concurrent fetches through one shared browser, and leaks none', async () => {
     const results = await Promise.all([
-      harness.call('web_fetch', { url: fixtures.url('spa.html'), render: 'always' }),
-      harness.call('web_fetch', { url: fixtures.url('a.html'), render: 'always' }),
-      harness.call('web_fetch', { url: fixtures.url('b.html'), render: 'always' }),
+      harness.call('web_fetch', { url: fixtures.url('spa.html') }),
+      harness.call('web_fetch', { url: fixtures.url('a.html') }),
+      harness.call('web_fetch', { url: fixtures.url('b.html') }),
     ]);
     for (const result of results)
       expect(result.isError, result.text).toBe(false);
     expect((await harness.call('browser_list', {})).section('Result')).toMatch(/No browser instances are open/);
   });
 
+  it('serves more concurrent fetches than the page cap allows', async () => {
+    // Past maxConcurrentPages the rest queue rather than opening a page each;
+    // every one still has to complete.
+    const urls = Array.from({ length: 20 }, (_, i) => fixtures.url(i % 2 ? 'a.html' : 'b.html'));
+    const results = await Promise.all(urls.map(url => harness.call('web_fetch', { url })));
+    for (const result of results)
+      expect(result.isError, result.text).toBe(false);
+  }, 180_000);
+
+  it('lists a browser the agent opened, while still hiding its own', async () => {
+    await harness.call('web_fetch', { url: fixtures.url('a.html') });
+    const opened = await harness.call('browser_open', {});
+    const id = JSON.parse(opened.section('Result')!).instance_id;
+    const listed = JSON.parse((await harness.call('browser_list', {})).section('Result')!);
+    expect(listed).toHaveLength(1);
+    expect(listed[0].instance_id).toBe(id);
+    await harness.call('browser_close', { instance_id: id });
+  });
+
   it('reports a 404 rather than pretending', async () => {
-    const result = await harness.call('web_fetch', { url: fixtures.url('no-such-page.html'), render: 'never' });
-    expect(result.text).toContain('HTTP status: 404');
+    const result = await harness.call('web_fetch', { url: fixtures.url('no-such-page.html') });
+    expect(result.text).toContain('- Status: 404');
   });
 });
 
@@ -171,16 +229,23 @@ describe('web_crawl', () => {
     expect(body).toContain('b.html');
   });
 
-  it('crawls with a real browser per page without leaking one', async () => {
+  it('records a page that is not a document, without calling it an error', async () => {
+    const result = await harness.call('web_crawl', { url: fixtures.url('data.json'), max_pages: 1 });
+    expect(result.isError, result.text).toBe(false);
+    const body = result.section('Result')!;
+    expect(body).toContain('- Content type: application/json');
+    expect(body).toContain('- Links found: 0');
+    expect(body).not.toContain('- Error:');
+  });
+
+  it('crawls concurrently through one shared browser without leaking it', async () => {
     const result = await harness.call('web_crawl', {
       url: fixtures.url('a.html'),
       max_pages: 3,
       concurrency: 3,
-      render: 'always',
     });
     expect(result.isError, result.text).toBe(false);
-    expect(result.section('Result')).toContain('Fetched with a real browser');
-    // One shared renderer, closed when the crawl ends.
+    expect(result.section('Result')).toContain('- Content type: text/html');
     expect((await harness.call('browser_list', {})).section('Result')).toMatch(/No browser instances are open/);
   });
 
@@ -198,10 +263,16 @@ describe('web_extract', () => {
     const result = await harness.call('web_extract', { url: fixtures.url('page.html'), mode: 'metadata' });
     const data = JSON.parse(result.section('Result')!);
     expect(data.source).toContain('page.html');
-    expect(data.fetched_with).toBe('a plain HTTP request');
+    expect(data.content_type).toBe('text/html');
     expect(data.title).toBe('Fixture page');
     expect(data.description).toBe('A fixture for agent-browser tests.');
     expect(data.open_graph.title).toBe('Fixture OG title');
+  });
+
+  it('refuses a url that is not a document, naming what it was', async () => {
+    const result = await harness.call('web_extract', { url: fixtures.url('data.json'), mode: 'metadata' });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain('application/json');
   });
 
   it('extracts tables as records', async () => {
@@ -236,8 +307,31 @@ describe.runIf(process.env.AGENT_BROWSER_LIVE === '1')('web_search against the l
     const body = result.section('Result')!;
     expect(body).toMatch(/^\d+ result\(s\)/);
     expect(body).toMatch(/https?:\/\//);
-    // No ad hosts, and no unresolved DuckDuckGo redirect wrappers.
-    expect(body).not.toContain('uddg=');
-    expect(body).not.toContain('duckduckgo.com/l/');
+    // Nothing sponsored, and no DuckDuckGo furniture presented as a result.
+    expect(body).not.toContain('duckduckgo.com');
   });
+
+  it('loads more batches by clicking the SERP\'s own "More results"', async () => {
+    const result = await harness.call('web_search', { query: 'chromium devtools protocol', count: 25 });
+    expect(result.isError, result.text).toBe(false);
+    const body = result.section('Result')!;
+    expect(body).toMatch(/\(([2-9]|\d\d) batch\(es\) loaded\)/);
+    const positions = [...body.matchAll(/^(\d+)\. /gm)].map(m => Number(m[1]));
+    expect(positions.length).toBeGreaterThan(10);
+    // Numbered straight through, so page two was parsed rather than repeated.
+    expect(positions).toEqual(positions.map((_, index) => index + 1));
+    const urls = [...body.matchAll(/^ {3}(https?:\S+)$/gm)].map(m => m[1]);
+    expect(new Set(urls).size).toBe(urls.length);
+  }, 60_000);
+
+  it('honours a site: operator, which the html endpoint could not', async () => {
+    const result = await harness.call('web_search', { query: 'site:playwright.dev getByRole locator', count: 5 });
+    expect(result.isError, result.text).toBe(false);
+    const body = result.section('Result')!;
+    expect(body).toMatch(/^\d+ result\(s\)/);
+    const urls = [...body.matchAll(/^ {3}(https?:\S+)$/gm)].map(m => m[1]);
+    expect(urls.length).toBeGreaterThan(0);
+    for (const url of urls)
+      expect(new URL(url).hostname).toContain('playwright.dev');
+  }, 60_000);
 });

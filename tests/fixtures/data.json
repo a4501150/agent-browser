@@ -1,0 +1,6 @@
+{
+  "name": "fixture",
+  "nested": { "list": [1, 2, 3], "flag": true },
+  "unicode": "café — naïve",
+  "note": "Served as application/json. Must come back byte-exact, not <pre>-wrapped."
+}

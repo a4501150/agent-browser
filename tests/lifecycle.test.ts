@@ -15,10 +15,11 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { childEnv, patchedChromium } from './helpers/client';
+import { App } from '../src/mcp/app';
 import { Artifacts } from '../src/util/artifacts';
 import { chromiumOwnerPid, isProcessAlive } from '../src/util/lockfile';
 import { Registry, reaperIntervalMs } from '../src/browser/registry';
-import { resolveConfig } from '../src/config';
+import { paths, resolveConfig } from '../src/config';
 
 const entry = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'index.js');
 
@@ -99,6 +100,61 @@ describe('idle reaper', () => {
     await session.client.close();
   }, 90_000);
 });
+
+describe('the browser behind the web_* tools', () => {
+  it('stays out of the agent\'s way, idles out on its own, and dies with the server', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-browser-renderer-'));
+    cleanups.push(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+    const app = new App(resolveConfig({ dataDir, binary: await patchedChromium() }), { rendererIdleMs: 500 });
+    cleanups.push(() => void app.close());
+
+    const first = await app.withRenderer(async () => recordedPids(dataDir));
+    expect(first, 'the renderer should have been recorded for orphan reaping').toHaveLength(1);
+    expect(isProcessAlive(first[0])).toBe(true);
+    // Ours, not the agent's: an instance nobody opened is one nobody can be
+    // expected to reason about.
+    expect(app.instances.list()).toHaveLength(0);
+    expect(app.instances.summaries()).toHaveLength(0);
+
+    expect(await waitUntil(() => !isProcessAlive(first[0]), 10_000), 'it should have idled out').toBe(true);
+
+    // A dead renderer must not stay memoised, or every later fetch fails.
+    const second = await app.withRenderer(async () => recordedPids(dataDir));
+    expect(second).toHaveLength(1);
+    expect(second[0]).not.toBe(first[0]);
+
+    await app.close();
+    expect(await waitUntil(() => !isProcessAlive(second[0]), 10_000), 'it should have died with the server').toBe(true);
+  }, 90_000);
+
+  it('wraps no page of its own in a Tab, while the agent\'s instances still are', async () => {
+    // A Tab costs seven listeners, an awaited request history and a download
+    // hook that saves to the same artifact path web_fetch is already writing.
+    // The renderer wants none of it, and a crawl opens hundreds of pages.
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-browser-notabs-'));
+    cleanups.push(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+    const app = new App(resolveConfig({ dataDir, binary: await patchedChromium() }));
+    cleanups.push(() => void app.close());
+
+    const ours = await app.instances.open({ profile: null, headless: true, internal: true, idleTimeout: 0 });
+    const page = await ours.browserContext.newPage();
+    await page.goto('about:blank');
+    expect(ours.tabs(), 'an internal instance must not wrap its pages').toHaveLength(0);
+    await page.close();
+
+    const theirs = await app.instances.open({ profile: null, headless: true });
+    await theirs.newTab();
+    expect(theirs.tabs().length, 'an agent-facing instance still tracks its tabs').toBeGreaterThan(0);
+
+    await app.close();
+  }, 90_000);
+});
+
+function recordedPids(dataDir: string): number[] {
+  const file = path.join(paths.processes(resolveConfig({ dataDir })), `${process.pid}.json`);
+  const records: { pid: number }[] = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  return records.map(record => record.pid);
+}
 
 describe('orphan reaping', () => {
   it('does not need to reap after an ordinary kill, because the browser dies with its server', async () => {
