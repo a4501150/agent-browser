@@ -33,12 +33,25 @@ itself the loudest tell. Measured through this server, launched exactly as it la
 | iphey.com | **Trustworthy**, nothing flagged | Unreliable |
 | CreepJS `headless` | **0%** | 67% |
 | CreepJS `stealth` | **0%** | 0% |
-| CreepJS `like headless` | 31% | 31% |
+| CreepJS `like headless` | 31% | 38% |
 | browserscan.net/bot-detection | **Normal**, 0 abnormal of 19 | — |
 | nowsecure.nl (real Cloudflare) | **passes** | — |
 
 Notably `isPlaywright: false` and `isAutomatedWithCDP: false`, so the driver underneath
-is not visible either. Reproduce it yourself:
+is not visible either.
+
+`like headless` is the one row that does not reach zero, and it should not: **31% is what
+real Chrome 150 _headed_ scores on this machine**, with the same five of sixteen checks
+true. Three of them (`noContentIndex`, `noContactsManager`, `noDownlinkMax`) test
+Android-only APIs, so they are true on every desktop Chrome ever shipped;
+`hasKnownBgColor` is the CSS `ActiveText` system colour being red, which Chrome always
+does; and `prefersLightColor` is the OS theme, so the same browser scores 25% in dark
+mode. The check that does separate the two columns is `noTaskbar` — Chrome headless
+reports an invented `screen 800x600` whose `availHeight` equals its height, where this
+build reports the real screen. Driving the row to 0% would mean serving an Android API
+surface under a macOS user agent, which is a far louder signal than the one it removes.
+
+Reproduce it yourself:
 
 ```bash
 npm run build && node scripts/detection-check.mjs
