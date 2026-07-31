@@ -39,7 +39,7 @@ async function connect(dataDir: string, args: string[] = []): Promise<Session> {
   const client = new Client({ name: 'lifecycle', version: '0' }, { capabilities: {} });
   await client.connect(new StdioClientTransport({
     command: process.execPath,
-    args: [entry, '--binary', patchedChromium(), '--data-dir', dataDir, ...args],
+    args: [entry, '--binary', await patchedChromium(), '--data-dir', dataDir, ...args],
     env: childEnv(),
     stderr: 'inherit',
   }));
@@ -113,7 +113,7 @@ describe('orphan reaping', () => {
     const client = new Client({ name: 'kill', version: '0' }, { capabilities: {} });
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: [entry, '--binary', patchedChromium(), '--data-dir', dataDir, '--idle-timeout', '0'],
+      args: [entry, '--binary', await patchedChromium(), '--data-dir', dataDir, '--idle-timeout', '0'],
       env: childEnv(),
       stderr: 'inherit',
     });

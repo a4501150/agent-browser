@@ -179,6 +179,10 @@ npm test                       # 122 tests; needs the patched Chromium
 AGENT_BROWSER_LIVE=1 npm test  # also runs the live DuckDuckGo test
 ```
 
+The tests resolve the browser exactly the way the server does, so they work
+against the downloaded release, or against a local build via
+`AGENT_BROWSER_BINARY=/path/to/Chromium.app npm test`.
+
 `tests/crossframe.test.ts` is the one to keep passing: it asserts the child frame's
 button appears with an `fNeN` ref, that clicking it records `isTrusted: true` inside the
 child, and that the page still cannot reach `contentDocument`.

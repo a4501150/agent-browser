@@ -23,7 +23,7 @@ type Served = { child: ChildProcess; port: number; stderr: string[] };
 
 async function serve(args: string[], env: Record<string, string> = {}): Promise<Served> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-browser-serve-'));
-  const child = spawn(process.execPath, [entry, 'serve', '--data-dir', dataDir, '--binary', patchedChromium(), ...args], {
+  const child = spawn(process.execPath, [entry, 'serve', '--data-dir', dataDir, '--binary', await patchedChromium(), ...args], {
     env: { ...process.env, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

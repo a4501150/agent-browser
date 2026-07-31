@@ -6,17 +6,19 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
+import { resolveBinary } from '../../src/browser/binary';
+import { resolveConfig } from '../../src/config';
+
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /**
- * The patched Chromium under test. There is no fallback to a stock browser: the
- * whole point is the patches, so a missing binary must fail loudly.
+ * The patched Chromium under test, resolved exactly the way the server resolves
+ * it: AGENT_BROWSER_BINARY, then the download cache, then the release asset.
+ * There is deliberately no fallback to a stock browser, because the patches are
+ * the entire point, so an unresolvable binary fails the suite loudly.
  */
-export function patchedChromium(): string {
-  const fromEnv = process.env.AGENT_BROWSER_BINARY;
-  if (fromEnv)
-    return fromEnv;
-  return '/Users/jinyangli/src/chromium-build/build/src/out/Default/Chromium.app/Contents/MacOS/Chromium';
+export async function patchedChromium(): Promise<string> {
+  return await resolveBinary(resolveConfig({}));
 }
 
 export type ToolResult = {
@@ -36,10 +38,7 @@ export type Harness = {
 };
 
 export async function startHarness(options?: { extraArgs?: string[] }): Promise<Harness> {
-  const binary = patchedChromium();
-  if (!fs.existsSync(binary))
-    throw new Error(`Patched Chromium not found at ${binary}. Set AGENT_BROWSER_BINARY.`);
-
+  const binary = await patchedChromium();
   const entry = path.join(repoRoot, 'dist', 'index.js');
   if (!fs.existsSync(entry))
     throw new Error(`${entry} is missing. Run "npm run build" first.`);

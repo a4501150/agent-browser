@@ -8,7 +8,7 @@
  * executable bits, and a naive zip extractor silently breaks the bundle.
  *
  * Usage
- *   node scripts/package-binary.mjs [--app <path to Chromium.app>] [--out <dir>]
+ *   node scripts/package-binary.mjs --app <path to Chromium.app> [--out <dir>]
  *
  * The asset is never committed to git; upload it to a GitHub release.
  */
@@ -23,17 +23,15 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-const defaultApp = '/Users/jinyangli/src/chromium-build/build/src/out/Default/Chromium.app';
-
 function parseArgs(argv) {
-  const args = { app: defaultApp, out: path.join(repoRoot, 'release') };
+  const args = { app: process.env.AGENT_BROWSER_APP, out: path.join(repoRoot, 'release') };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--app')
       args.app = argv[++i];
     else if (argv[i] === '--out')
       args.out = argv[++i];
     else if (argv[i] === '--help') {
-      process.stdout.write('Usage: node scripts/package-binary.mjs [--app <Chromium.app>] [--out <dir>]\n');
+      process.stdout.write('Usage: node scripts/package-binary.mjs --app <Chromium.app> [--out <dir>]\n');
       process.exit(0);
     } else {
       process.stderr.write(`Unknown option "${argv[i]}"\n`);
@@ -51,9 +49,11 @@ async function sha256(file) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (!args.app)
+    throw new Error('Pass --app <Chromium.app>, or set AGENT_BROWSER_APP.');
   const app = path.resolve(args.app);
   if (!fs.existsSync(app))
-    throw new Error(`No app bundle at ${app}. Build it, or pass --app.`);
+    throw new Error(`No app bundle at ${app}.`);
 
   const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, 'src', 'browser', 'manifest.json'), 'utf-8'));
   const platform = `${process.platform}-${process.arch}`;
