@@ -1,0 +1,40 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Fixture page</title>
+<meta name="description" content="A fixture for agent-browser tests.">
+<meta property="og:title" content="Fixture OG title">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"Fixture headline","author":{"@type":"Person","name":"A Tester"}}
+</script>
+<body>
+<h1>Fixture page</h1>
+<article>
+  <p>This is a reasonably long paragraph so that Readability has enough content to consider this
+  document an article rather than boilerplate. It repeats itself deliberately. This is a reasonably
+  long paragraph so that Readability has enough content to consider this document an article rather
+  than boilerplate. It mentions a <a href="../relative/target.html">relative link</a> which must be
+  absolutized, and an <a href="https://example.com/absolute">absolute link</a>.</p>
+  <p>A second paragraph, also long enough to matter, so that the extracted article is not empty and
+  the markdown conversion has something to chew on. A second paragraph, also long enough to matter,
+  so that the extracted article is not empty.</p>
+  <table>
+    <caption>Fixture table</caption>
+    <tr><th>Name</th><th>Value</th></tr>
+    <tr><td>alpha</td><td>1</td></tr>
+    <tr><td>beta</td><td>2</td></tr>
+  </table>
+  <ol><li>first</li><li>second</li></ol>
+</article>
+<button id="b">Click me</button>
+<input id="t" type="text">
+<input id="c" type="checkbox">
+<select id="s"><option value="1">One</option><option value="2">Two</option></select>
+<div id="log">none</div>
+<div id="tall" style="height:2000px"></div>
+<script>
+  window.__clicks = [];
+  document.getElementById('b').addEventListener('click', e => {
+    window.__clicks.push({ isTrusted: e.isTrusted });
+    document.getElementById('log').textContent = 'clicked ' + window.__clicks.length;
+  });
+</script>

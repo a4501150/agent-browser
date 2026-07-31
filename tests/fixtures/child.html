@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Cross-site child</title>
+<style>body{margin:0;font:14px system-ui}#sp{height:120px}#btn{margin-left:60px;width:180px;height:44px}</style>
+<body>
+<div id="sp">child document (cross-site)</div>
+<button id="btn">click me</button>
+<div id="log">no clicks</div>
+<script>
+  window.__clicks = [];
+  document.getElementById('btn').addEventListener('click', e => {
+    window.__clicks.push({ isTrusted: e.isTrusted, x: e.clientX, y: e.clientY });
+    document.getElementById('log').textContent = 'trusted=' + e.isTrusted + ' count=' + window.__clicks.length;
+  });
+</script>

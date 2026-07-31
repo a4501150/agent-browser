@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Cross-site parent</title>
+<style>body{margin:0}#pad{height:180px;background:#eee}#f{margin-left:220px;width:400px;height:300px;border:0}</style>
+<body>
+<div id="pad">parent page</div>
+<iframe id="f" src="about:blank"></iframe>
+<script>
+  // The child origin is passed in, so the harness can pick two hostnames that
+  // are different *sites* -- which is what makes the iframe out-of-process.
+  document.getElementById('f').src = new URL(location.href).searchParams.get('child');
+  window.__pageProbe = () => {
+    const f = document.getElementById('f');
+    let cd, cw;
+    try { cd = !!f.contentDocument; } catch (e) { cd = 'threw'; }
+    try { void f.contentWindow.document; cw = 'readable'; } catch (e) { cw = 'threw'; }
+    return { contentDocument: cd, contentWindowDocument: cw };
+  };
+</script>

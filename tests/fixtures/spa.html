@@ -1,0 +1,9 @@
+<!doctype html><meta charset="utf-8"><title>Client rendered</title>
+<body><div id="root"></div>
+<script>
+  const p = document.createElement('p');
+  p.textContent = 'This text only exists after scripts run. '.repeat(20);
+  const h = document.createElement('h1');
+  h.textContent = 'Rendered heading';
+  document.getElementById('root').append(h, p);
+</script>

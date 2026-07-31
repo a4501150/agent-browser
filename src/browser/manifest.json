@@ -1,0 +1,14 @@
+{
+  "version": "148.0.7778.215",
+  "revision": "1",
+  "comment": "sha256 is filled in by scripts/package-binary.mjs when a release asset is published. A null sha256 means no asset exists for that platform yet, and the resolver says so instead of downloading something unverifiable.",
+  "platforms": {
+    "darwin-arm64": {
+      "url": "https://github.com/a4501150/agent-browser/releases/download/chromium-148.0.7778.215-1/chromium-148.0.7778.215-darwin-arm64.tar.gz",
+      "sha256": null,
+      "size": null,
+      "app": "Chromium.app",
+      "executable": "Chromium.app/Contents/MacOS/Chromium"
+    }
+  }
+}
