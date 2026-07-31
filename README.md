@@ -200,8 +200,10 @@ own "More results" until the engine stops giving them.
 
 A Cloudflare interstitial is waited out rather than returned: the response says
 `cf-mitigated: challenge`, Turnstile runs, and the real page arrives a few seconds later. An
-interactive checkbox or an image CAPTCHA is not solved for you — open an instance and click
-it, which works even though the widget is in a cross-origin iframe.
+interactive checkbox is not solved for you, but you can solve it yourself in one call —
+`browser_click` on the widget's own selector, `.cf-turnstile` say. Cloudflare's siteverify
+accepts the result as a genuine interactive solve. An image CAPTCHA needs classification
+rather than a click, so that one is yours to read off a screenshot.
 
 ## Profiles
 

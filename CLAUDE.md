@@ -363,10 +363,40 @@ Two consequences worth keeping straight:
 - `lastResponse` had to be narrowed to main-frame **navigation** responses. Every
   subresource the main frame loads also reports that frame, so the old test would have left
   it pointing at whichever stylesheet arrived last.
-- The interactive variants — a Turnstile checkbox, an image CAPTCHA — are deliberately not
-  handled by `web_*`. The answer there is `browser_open` and a click on the frame-prefixed
-  ref, which is the thing this repo is uniquely good at. No solver service: a research tool
-  must not quietly ship page content to a paid API.
+- The interactive variants stay out of `web_*`, though not because they are unreachable — see
+  the next section. No solver service either way: a research tool must not quietly ship page
+  content to a paid API.
+
+### A Turnstile checkbox is a closed shadow root, not an iframe
+
+The obvious guess — and what this file used to claim — is that the widget is a cross-origin
+iframe you reach with a frame-prefixed ref. **There is no ref.** The UI lives in a **closed**
+shadow root on a div inside the host element (`attachShadow` on that div throws *"already
+hosts a shadow tree"*, which is how to confirm it), and at checkbox stage it is not a child
+browsing context at all — `window.length` does not change when it renders. So none of it
+reaches the outline, and none of it ever will: `ariaSnapshot` runs as page JS, and page JS
+cannot see a closed shadow root by design. Surfacing it would take a Chromium patch or an
+outline built from CDP's AX tree, and neither is worth it, because:
+
+**`browser_click` on the host's CSS selector solves it.** The host (`.cf-turnstile`,
+`#turnstile-managed`) is ordinary light DOM, Turnstile accepts a click anywhere on the widget
+rather than only on the checkbox square, and Playwright scrolls the element into view itself.
+Measured against a real sitekey: siteverify returned `success: true` with
+`metadata.interactive: true`, i.e. Cloudflare counted it as a human solving a real challenge.
+
+Two traps around measuring this:
+
+- **An element screenshot scrolls the page**, so coordinates read before it are stale. A click
+  26 px low lands in the widget's footer banner and does nothing, silently. Re-read the box
+  after the last screenshot, or use the selector and no coordinates at all.
+- **A real managed widget mostly passes us without interaction**, so it cannot prove a click
+  works: one run reported `interactive: false` from an already-trusted ephemeral id, and a
+  fresh profile auto-solved before anything was clicked. The dummy sitekey
+  `3x00000000000000000000FF` forces an interactive widget every time and is the only reliable
+  way to exercise the click path, at the cost of a canned `XXXX.DUMMY.TOKEN.XXXX` token.
+
+An image CAPTCHA is a different problem: it needs classification rather than a click, so the
+agent reading it off a screenshot is the answer, not a tool.
 
 ### Readability can succeed and still be wrong by three orders of magnitude
 
