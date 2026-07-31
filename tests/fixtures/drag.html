@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Drag and hover</title>
+<style>
+  #src { width: 120px; height: 60px; background: #cde; }
+  #dst { width: 200px; height: 120px; background: #edc; margin-top: 20px; }
+  #hoverme { width: 150px; height: 40px; background: #ddd; margin-top: 20px; }
+</style>
+<body>
+<div id="src" draggable="true">drag me</div>
+<div id="dst">drop here</div>
+<div id="hoverme">hover me</div>
+<input id="keys">
+<div id="log">idle</div>
+<script>
+  const log = document.getElementById('log');
+  window.__state = { dropped: false, hovered: false, keys: [] };
+  const src = document.getElementById('src');
+  const dst = document.getElementById('dst');
+  src.addEventListener('dragstart', e => e.dataTransfer.setData('text/plain', 'payload'));
+  dst.addEventListener('dragover', e => e.preventDefault());
+  dst.addEventListener('drop', e => {
+    e.preventDefault();
+    window.__state.dropped = e.dataTransfer.getData('text/plain');
+    log.textContent = 'dropped:' + window.__state.dropped;
+  });
+  document.getElementById('hoverme').addEventListener('mouseenter', () => {
+    window.__state.hovered = true;
+    log.textContent = 'hovered';
+  });
+  document.getElementById('keys').addEventListener('keydown', e => {
+    window.__state.keys.push((e.ctrlKey ? 'Ctrl+' : '') + e.key);
+  });
+</script>

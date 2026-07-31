@@ -175,7 +175,7 @@ npm install
 npm run build
 npm run typecheck
 npm run lint
-npm test                       # 115 tests; needs the patched Chromium
+npm test                       # 118 tests; needs the patched Chromium
 AGENT_BROWSER_LIVE=1 npm test  # also runs the live DuckDuckGo test
 ```
 

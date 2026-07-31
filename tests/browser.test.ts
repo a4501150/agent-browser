@@ -180,7 +180,34 @@ describe('interaction', () => {
     expect(await evaluate('document.getElementById("s").value')).toBe('2');
   });
 
+  it('hovers an element', async () => {
+    await harness.call('browser_navigate', { instance_id: instance, url: fixtures.url('drag.html') });
+    const hover = await harness.call('browser_hover', { instance_id: instance, target: '#hoverme', element: 'the hover target' });
+    expect(hover.isError, hover.text).toBe(false);
+    expect(await evaluate('window.__state.hovered')).toBe(true);
+  });
+
+  it('drags one element onto another, carrying the drag payload', async () => {
+    await harness.call('browser_navigate', { instance_id: instance, url: fixtures.url('drag.html') });
+    const drag = await harness.call('browser_drag', { instance_id: instance, from: '#src', to: '#dst', element: 'the draggable box' });
+    expect(drag.isError, drag.text).toBe(false);
+    expect(await evaluate('window.__state.dropped')).toBe('payload');
+  });
+
+  it('presses a key and a key combination', async () => {
+    await harness.call('browser_navigate', { instance_id: instance, url: fixtures.url('drag.html') });
+    await harness.call('browser_click', { instance_id: instance, target: '#keys' });
+    expect((await harness.call('browser_press_key', { instance_id: instance, key: 'a' })).isError).toBe(false);
+    expect((await harness.call('browser_press_key', { instance_id: instance, key: 'Control+b' })).isError).toBe(false);
+    expect((await harness.call('browser_press_key', { instance_id: instance, key: 'ArrowLeft' })).isError).toBe(false);
+    // The modifier fires its own keydown first, exactly as a real keyboard does.
+    expect(await evaluate('window.__state.keys')).toEqual(['a', 'Ctrl+Control', 'Ctrl+b', 'ArrowLeft']);
+  });
+
   it('scrolls, and scrolls all the way back to the top', async () => {
+    // page.html is the fixture tall enough to scroll; do not inherit whatever
+    // the previous test navigated to.
+    await harness.call('browser_navigate', { instance_id: instance, url: fixtures.url('page.html') });
     await harness.call('browser_scroll', { instance_id: instance, direction: 'down', amount: 400 });
     expect(await evaluate('window.scrollY > 0')).toBe(true);
     await harness.call('browser_scroll', { instance_id: instance, direction: 'top' });
