@@ -6,7 +6,6 @@ import { defineTabTool } from '../mcp/tool';
 const navigate = defineTabTool({
   schema: {
     name: 'browser_navigate',
-    title: 'Navigate',
     description: 'Navigate to a URL, or move through history. Provide exactly one of url or action.',
     inputSchema: z.object({
       url: z.string().optional().describe('The URL to navigate to.'),

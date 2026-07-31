@@ -15,7 +15,6 @@ import type * as playwright from 'playwright-core';
 const readConsole = defineTabTool({
   schema: {
     name: 'browser_read_console',
-    title: 'Read console messages',
     description: 'Return the page\'s console messages and uncaught errors.',
     inputSchema: z.object({
       level: z.enum(['error', 'warning', 'info', 'debug']).optional().describe('Minimum severity to include; each level also includes the more severe ones. Defaults to info.'),
@@ -41,7 +40,6 @@ const readConsole = defineTabTool({
 const listRequests = defineTabTool({
   schema: {
     name: 'browser_list_requests',
-    title: 'List network requests',
     description: 'List the network requests made since the page loaded, newest last. Use browser_get_request with a ' +
       'request_id for headers and bodies. Successful static resources are hidden unless resource_type asks for them.',
     inputSchema: z.object({
@@ -105,7 +103,6 @@ const listRequests = defineTabTool({
 const getRequest = defineTabTool({
   schema: {
     name: 'browser_get_request',
-    title: 'Get request details',
     description: 'Return one network request in full: status, timing, request and response headers, and optionally the bodies.',
     inputSchema: z.object({
       request_id: z.string().regex(/^#?[1-9]\d*$/, 'A request id looks like "#3" or "3".').describe('The request id from browser_list_requests, e.g. "#3" or "3".'),

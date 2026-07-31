@@ -7,7 +7,6 @@ import { renderTabsMarkdown } from '../mcp/response';
 const tabs = defineInstanceTool({
   schema: {
     name: 'browser_tabs',
-    title: 'Manage tabs',
     description: 'List, open, select or close tabs.',
     inputSchema: z.object({
       action: z.enum(['list', 'new', 'select', 'close']).describe('What to do.'),

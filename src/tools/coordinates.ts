@@ -7,7 +7,6 @@ import { formatObjectOrVoid } from '../vendor/stringUtils';
 const mouse = defineTabTool({
   schema: {
     name: 'browser_mouse',
-    title: 'Mouse at coordinates',
     description: 'Drive the mouse by viewport coordinates, in CSS pixels. Prefer browser_click with a ref where you can: ' +
       'coordinates are brittle, and for an element inside a cross-origin iframe the ref path also does the ' +
       'frame-to-viewport translation that raw coordinates do not.',
@@ -86,7 +85,6 @@ const defaultScrollAmount = 500;
 const scroll = defineTabTool({
   schema: {
     name: 'browser_scroll',
-    title: 'Scroll',
     description: 'Scroll the page by an amount, or all the way to the top or bottom.',
     inputSchema: z.object({
       direction: z.enum(['up', 'down', 'left', 'right', 'top', 'bottom']).describe('Where to scroll. "top" and "bottom" ignore amount.'),

@@ -5,7 +5,6 @@ import { defineInstanceTool } from '../mcp/tool';
 const setWindowSize = defineInstanceTool({
   schema: {
     name: 'browser_set_window_size',
-    title: 'Set the window size',
     description: 'Resize the real browser window. The layout viewport follows it, because no device-metrics emulation ' +
       'override is ever set — so window.outerWidth, innerWidth, screen.* and devicePixelRatio stay coherent, and in ' +
       'headed mode the window you are watching actually changes.',

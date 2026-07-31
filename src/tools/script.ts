@@ -112,7 +112,6 @@ function pageRunner(payload: Payload): Promise<Outcome> {
 const runJavaScript = defineTabTool({
   schema: {
     name: 'browser_run_javascript',
-    title: 'Run JavaScript',
     description: 'Evaluate JavaScript in the page and return the result. Accepts an expression, an arrow function, or ' +
       'statements with a return. Promises are awaited, including top-level await. When target is given the element is ' +
       'passed as the first argument.',

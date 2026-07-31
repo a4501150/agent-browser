@@ -22,7 +22,6 @@ export const elementSchema = z.object({
 const readPage = defineTabTool({
   schema: {
     name: 'browser_read_page',
-    title: 'Read the page',
     description: 'Return the page as an accessibility outline with [ref=eN] handles that every action tool accepts. ' +
       'This is the primary way to perceive a page: it is 10-50x smaller than the HTML and it recurses into iframes, ' +
       'including cross-origin ones, whose refs come back frame-prefixed (f1e3). Prefer this over a screenshot.',
@@ -48,7 +47,6 @@ const contextLines = 3;
 const find = defineTabTool({
   schema: {
     name: 'browser_find',
-    title: 'Find in the page outline',
     description: 'Search the page\'s accessibility outline and return the matching nodes with their refs and a few lines ' +
       'of surrounding context, each shown under its path from the root. Cheaper than reading the whole page when you ' +
       'only need to locate one element.',
@@ -135,7 +133,6 @@ const find = defineTabTool({
 const screenshot = defineTabTool({
   schema: {
     name: 'browser_screenshot',
-    title: 'Take a screenshot',
     description: 'Capture a PNG or JPEG of the page or one element. You cannot act on coordinates read off a screenshot ' +
       'reliably; use browser_read_page and refs for that.',
     inputSchema: z.object({

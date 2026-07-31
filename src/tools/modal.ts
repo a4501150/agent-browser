@@ -11,7 +11,6 @@ import { resolveClientPath } from '../util/artifacts';
 const waitFor = defineTabTool({
   schema: {
     name: 'browser_wait_for',
-    title: 'Wait for',
     description: 'Wait for an element to appear, for text to appear or disappear, or for a fixed time. At least one of ' +
       'target, text, text_gone or time is required.',
     inputSchema: z.object({
@@ -60,7 +59,6 @@ const waitFor = defineTabTool({
 const handleDialog = defineTabTool({
   schema: {
     name: 'browser_handle_dialog',
-    title: 'Handle a dialog',
     description: 'Accept or dismiss the open JavaScript dialog. A dialog blocks the renderer, so no other tool works until ' +
       'it is handled.',
     inputSchema: z.object({
@@ -92,7 +90,6 @@ const handleDialog = defineTabTool({
 const uploadFile = defineTabTool({
   schema: {
     name: 'browser_upload_file',
-    title: 'Upload files',
     description: 'Set files on a file input. If a file chooser is open, this answers it; otherwise pass target to set the ' +
       'files directly, which also works when the real <input type=file> is hidden behind a styled button.',
     inputSchema: z.object({

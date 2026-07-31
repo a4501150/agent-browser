@@ -12,7 +12,6 @@ import { escapeWithQuotes, formatObject, formatObjectOrVoid } from '../vendor/st
 const click = defineTabTool({
   schema: {
     name: 'browser_click',
-    title: 'Click',
     description: 'Click an element. Works identically on elements inside cross-origin iframes: pass their frame-prefixed ref. ' +
       'Set checked to tick or untick a checkbox or radio instead of clicking it.',
     inputSchema: elementSchema.extend({
@@ -52,7 +51,6 @@ const click = defineTabTool({
 const hover = defineTabTool({
   schema: {
     name: 'browser_hover',
-    title: 'Hover',
     description: 'Move the mouse over an element.',
     inputSchema: elementSchema,
     type: 'input',
@@ -69,7 +67,6 @@ const hover = defineTabTool({
 const drag = defineTabTool({
   schema: {
     name: 'browser_drag',
-    title: 'Drag and drop',
     description: 'Drag one element onto another.',
     inputSchema: z.object({
       from: z.string().describe('Source element: a ref from the page outline, a CSS selector, or an XPath.'),
@@ -95,7 +92,6 @@ const drag = defineTabTool({
 const typeText = defineTabTool({
   schema: {
     name: 'browser_type_text',
-    title: 'Type text',
     description: 'Type into an editable element. Fills the whole value at once unless slowly is set.',
     inputSchema: elementSchema.extend({
       text: z.string().describe('Text to type.'),
@@ -138,7 +134,6 @@ const typeText = defineTabTool({
 const pressKey = defineTabTool({
   schema: {
     name: 'browser_press_key',
-    title: 'Press a key',
     description: 'Press a key or key combination, e.g. "Enter", "ArrowLeft", "Control+a", "a".',
     inputSchema: z.object({
       key: z.string().describe('Key name or character, optionally with modifiers joined by "+".'),
@@ -163,7 +158,6 @@ const pressKey = defineTabTool({
 const fillForm = defineTabTool({
   schema: {
     name: 'browser_fill_form',
-    title: 'Fill a form',
     description: 'Fill several form fields in one call.',
     inputSchema: z.object({
       fields: z.array(z.object({

@@ -31,7 +31,6 @@ export type ToolType = 'input' | 'action' | 'readOnly';
 
 export type ToolSchema = {
   name: string;
-  title: string;
   description: string;
   inputSchema: z.ZodObject;
   type: ToolType;
@@ -49,14 +48,14 @@ const instanceIdField = {
 };
 
 export function defineGlobalTool<Input extends z.ZodObject>(tool: {
-  schema: { name: string; title: string; description: string; inputSchema: Input; type: ToolType };
+  schema: { name: string; description: string; inputSchema: Input; type: ToolType };
   handle: (host: ServerHost, params: z.output<Input>, response: Response, signal?: AbortSignal) => Promise<void>;
 }): ToolDefinition {
   return { kind: 'global', schema: tool.schema, handle: tool.handle };
 }
 
 export function defineInstanceTool<Input extends z.ZodObject>(tool: {
-  schema: { name: string; title: string; description: string; inputSchema: Input; type: ToolType };
+  schema: { name: string; description: string; inputSchema: Input; type: ToolType };
   handle: (instance: Instance, params: z.output<Input>, response: Response, signal?: AbortSignal) => Promise<void>;
 }): ToolDefinition {
   return {
@@ -71,7 +70,7 @@ export function defineInstanceTool<Input extends z.ZodObject>(tool: {
  * unhandled dialog or file chooser is up, unless it is the tool that clears it.
  */
 export function defineTabTool<Input extends z.ZodObject>(tool: {
-  schema: { name: string; title: string; description: string; inputSchema: Input; type: ToolType };
+  schema: { name: string; description: string; inputSchema: Input; type: ToolType };
   clearsModalState?: ModalState['type'];
   /** browser_upload_file also works without a file chooser, by targeting the input directly. */
   modalStateOptional?: boolean;

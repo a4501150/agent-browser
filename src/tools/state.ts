@@ -13,7 +13,6 @@ import type * as playwright from 'playwright-core';
 const cookies = defineInstanceTool({
   schema: {
     name: 'browser_cookies',
-    title: 'Cookies',
     description: 'List, read, set, delete or clear cookies.',
     inputSchema: z.object({
       action: z.enum(['list', 'get', 'set', 'delete', 'clear']).describe('What to do.'),
@@ -110,7 +109,6 @@ const cookies = defineInstanceTool({
 const storage = defineTabTool({
   schema: {
     name: 'browser_storage',
-    title: 'Web storage',
     description: 'Read or write the current page\'s localStorage or sessionStorage.',
     inputSchema: z.object({
       area: z.enum(['local', 'session']).describe('Which storage area.'),
@@ -166,7 +164,6 @@ const storage = defineTabTool({
 const session = defineInstanceTool({
   schema: {
     name: 'browser_session',
-    title: 'Save or load a session',
     description: 'Save cookies and local storage to a JSON file, or restore them from one. Loading clears the existing ' +
       'cookies and local storage first.',
     inputSchema: z.object({
@@ -197,7 +194,6 @@ const session = defineInstanceTool({
 const interceptRequests = defineInstanceTool({
   schema: {
     name: 'browser_intercept_requests',
-    title: 'Intercept requests',
     description: 'Block requests, serve a canned response, or rewrite request headers, for URLs matching a glob pattern.',
     inputSchema: z.object({
       action: z.enum(['add', 'remove', 'list']).describe('What to do.'),

@@ -10,7 +10,6 @@ import { search } from '../web/search';
 const webSearch = defineGlobalTool({
   schema: {
     name: 'web_search',
-    title: 'Search the web',
     description: 'Search DuckDuckGo and return organic results with titles, URLs and snippets. Sponsored results are ' +
       'filtered out. No browser instance is needed.',
     inputSchema: z.object({
@@ -41,7 +40,6 @@ const webSearch = defineGlobalTool({
 const webFetch = defineGlobalTool({
   schema: {
     name: 'web_fetch',
-    title: 'Fetch a URL',
     description: 'Fetch one URL and return it as markdown, plain text, raw HTML or a PDF. Tries a plain HTTP request ' +
       'first and escalates to a real browser when the response looks like a bot challenge or renders client-side. ' +
       'No browser instance is needed; for a page you have already interacted with or logged into, use ' +
@@ -111,7 +109,6 @@ const webFetch = defineGlobalTool({
 const webCrawl = defineGlobalTool({
   schema: {
     name: 'web_crawl',
-    title: 'Crawl a site',
     description: 'Walk a site from one URL, staying on the same origin, and return each page as markdown. ' +
       'robots.txt is not consulted. Use "map" to collect URLs and titles only, which is much cheaper.',
     inputSchema: z.object({
@@ -166,7 +163,6 @@ const webCrawl = defineGlobalTool({
 const webExtract = defineGlobalTool({
   schema: {
     name: 'web_extract',
-    title: 'Extract structured data',
     description: 'Pull structured data out of a page: elements matching a selector, tables as records, page metadata, ' +
       'or JSON-LD and microdata. Deterministic, with no model in the loop. Pass either url or html.',
     inputSchema: z.object({

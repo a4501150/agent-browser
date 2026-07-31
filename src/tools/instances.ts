@@ -6,7 +6,6 @@ import { defaultWindowSize } from '../browser/instance';
 const open = defineGlobalTool({
   schema: {
     name: 'browser_open',
-    title: 'Open a browser',
     description: 'Launch a browser instance and return its instance_id, which every other browser tool takes. ' +
       'Reuses the named profile directly when it is free, so cookies and logins accumulate across sessions; ' +
       'under concurrency it clones the profile into an ephemeral slot instead.',
@@ -45,7 +44,6 @@ const open = defineGlobalTool({
 const list = defineGlobalTool({
   schema: {
     name: 'browser_list',
-    title: 'List browser instances',
     description: 'List the live browser instances with their profile, tab count and current URL.',
     inputSchema: z.object({}),
     type: 'readOnly',
@@ -64,7 +62,6 @@ const list = defineGlobalTool({
 const close = defineInstanceTool({
   schema: {
     name: 'browser_close',
-    title: 'Close the browser',
     description: 'Close a browser instance and release its profile.',
     inputSchema: z.object({}),
     type: 'action',
