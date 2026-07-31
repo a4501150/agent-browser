@@ -5,8 +5,8 @@
   "platforms": {
     "darwin-arm64": {
       "url": "https://github.com/a4501150/agent-browser/releases/download/chromium-148.0.7778.215-1/chromium-148.0.7778.215-darwin-arm64.tar.gz",
-      "sha256": "020a54e18dc5bc674bd6e225011fbf06e4e64c6d54400e66b1649e4f9276e24b",
-      "size": 154290783,
+      "sha256": "9ed1752f4223767d05a84b64c8ac3a11c6589fe3cabcf0c2fc7ea5a0912253d6",
+      "size": 153777682,
       "app": "Chromium.app",
       "executable": "Chromium.app/Contents/MacOS/Chromium"
     }

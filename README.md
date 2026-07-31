@@ -189,6 +189,10 @@ against the downloaded release, or against a local build via
 button appears with an `fNeN` ref, that clicking it records `isTrusted: true` inside the
 child, and that the page still cannot reach `contentDocument`.
 
+Publishing a new browser build is an ordering-sensitive four steps (the asset has to exist
+before the manifest names its checksum, or first use fails with a 404 instead of a useful
+message). See "Releasing the browser binary" in [CLAUDE.md](CLAUDE.md).
+
 ## Credits
 
 Built on [Playwright](https://github.com/microsoft/playwright) (Apache-2.0), whose tool

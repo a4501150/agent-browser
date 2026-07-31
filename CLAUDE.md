@@ -224,25 +224,76 @@ the profile lock serialises them anyway.
 
 ## Releasing the browser binary
 
-`node scripts/package-binary.mjs` tars `Chromium.app` (367 MB → ~154 MB gzipped) and
-prints the manifest entry. **The archive is never committed to git** — release assets
-only, and `release/` is gitignored.
+The browser is shipped as a GitHub release asset, never committed to git (`release/` is
+gitignored). Currently published: tag `chromium-148.0.7778.215-1`, darwin-arm64 only.
 
-`sha256: null` in `src/browser/manifest.json` means "no asset published for this platform
-yet", and the resolver says exactly that instead of trying to download something it
-cannot verify. Fill it in only *after* the release exists, or first use fails with a 404
-instead of a useful message. `chromium-148.0.7778.215-1` is published, so darwin-arm64 is
-filled in; a new Chromium version needs a new tag, a new asset and a bumped `revision`.
+### The ordering is not optional
 
-Note this couples the test suite to the release: `tests/helpers/client.ts` resolves the
-browser through `resolveBinary`, so with no `AGENT_BROWSER_BINARY` the tests download the
-published asset. Two tests in `tests/binary.test.ts` used to assert the *refusal* paths
-(no entry for the platform, null sha256); both are unreachable on a platform that has a
-published asset, so they were replaced by an assertion that resolution only ever returns
-a path inside the version-pinned cache.
+`src/browser/manifest.json` pins `version`, `revision` and a per-platform `{url, sha256,
+size}`. **`sha256: null` means "no asset published for this platform yet"**, and the
+resolver says exactly that, pointing at `--binary` / `AGENT_BROWSER_BINARY`. Fill it in
+and the resolver starts trusting the URL — so filling it in before the asset is uploaded
+turns a clear message into `Download failed: 404`.
 
-The archive must be `.tar.gz`, not `.zip`: the bundle contains 5 symlinks (including
-`Chromium Framework.framework/Versions/Current`) plus executable bits, and a naive zip
-extractor breaks it silently. Extraction shells out to `tar`, and macOS additionally
-needs `xattr -dr com.apple.quarantine` because the build is `adhoc, linker-signed` with
-no Team ID.
+So, in this order:
+
+```bash
+# 1. Bump `version` (and reset `revision` to "1") in src/browser/manifest.json,
+#    leaving sha256 and size null. Same Chromium version, rebuilt patches?
+#    Bump `revision` instead. Note `url` embeds both, and step 2 prints the
+#    correct one, so there is no need to hand-edit it.
+
+# 2. Package. Prints the manifest entry, including the sha256.
+node scripts/package-binary.mjs --app /path/to/out/Default/Chromium.app --out ./release
+
+# 3. Publish the asset FIRST, under the tag the manifest URL names:
+#    chromium-<version>-<revision>
+gh release create chromium-<version>-<revision> ./release/chromium-<version>-<platform>.tar.gz \
+  --title "Patched Chromium <version> (revision <revision>)" --notes "..."
+
+# 4. Only now paste the entry step 2 printed (url, sha256, size) into the
+#    manifest, rebuild, and verify from a genuinely cold cache:
+npm run build && rm -rf /tmp/cold
+#    then open a browser with --data-dir /tmp/cold, no --binary, and no
+#    AGENT_BROWSER_BINARY in the environment.
+
+# 5. Commit the manifest and push.
+```
+
+Step 4 must actually be run. It is the only thing that exercises download → checksum →
+`tar` extract → de-quarantine → launch together, and each of those has silently broken
+once already.
+
+### The archive is reproducible, and has to be
+
+`gzip` stamps the current time into its header, so `tar -czf` produces a different
+checksum every run from byte-identical input. That is a trap in the procedure above: run
+the packager again after uploading — to check a hash, say — and you get a hash that does
+not match the published asset, with nothing to indicate why. The packager therefore pipes
+`tar -cf -` into `gzip -9 -n`. Two runs over an unchanged bundle now produce the same
+sha256, which is what makes the published asset independently verifiable.
+
+### Publishing couples the test suite to the release
+
+`tests/helpers/client.ts` resolves the browser through the product's own `resolveBinary`,
+so with no `AGENT_BROWSER_BINARY` the tests download the published asset. Two consequences:
+
+- **The refusal paths become untestable on a published platform.** Two tests in
+  `tests/binary.test.ts` asserted "no manifest entry for this platform" and "null sha256";
+  both are unreachable once an asset exists for the platform you are testing on, and they
+  failed the moment the release went up. They are now one test that seeds the cache and
+  asserts resolution only ever returns a path inside the version-pinned cache — never a
+  stock Chromium found elsewhere. That invariant holds either way.
+- **A test run on a cold cache pulls 154 MB.** Set `AGENT_BROWSER_BINARY` to a local build
+  while iterating.
+
+### Why `.tar.gz` and why the xattr
+
+The bundle contains 5 symlinks — including
+`Chromium Framework.framework/Versions/Current` — plus executable bits. `tar` preserves
+both; a naive zip extractor breaks the bundle silently, so this is not a packaging
+preference. Extraction shells out to `tar`, which ships with macOS, Linux and Windows 10+.
+
+macOS additionally needs `xattr -dr com.apple.quarantine` after extracting, because the
+build is `adhoc, linker-signed` with `Sealed Resources=none` and no Team ID: downloaded
+from the internet it gets quarantined and Gatekeeper refuses to run it.

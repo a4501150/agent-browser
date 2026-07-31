@@ -12,7 +12,7 @@
  *
  * The asset is never committed to git; upload it to a GitHub release.
  */
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -39,6 +39,18 @@ function parseArgs(argv) {
     }
   }
   return args;
+}
+
+/** tar | gzip -n, spawned directly so no shell quoting is involved. */
+async function pipeThrough(archive, parent, name) {
+  const tar = spawn('tar', ['-cf', '-', '-C', parent, name], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const gzip = spawn('gzip', ['-9', '-n'], { stdio: ['pipe', 'pipe', 'inherit'] });
+  const out = fs.createWriteStream(archive);
+  const exits = [tar, gzip].map(child => new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('exit', code => code === 0 ? resolve() : reject(new Error(`${child.spawnfile} exited with ${code}`)));
+  }));
+  await Promise.all([pipeline(tar.stdout, gzip.stdin), pipeline(gzip.stdout, out), ...exits]);
 }
 
 async function sha256(file) {
@@ -78,12 +90,23 @@ async function main() {
   process.stdout.write(`archiving:  ${archive}\n`);
   // -C the parent so the archive contains "Chromium.app/..." at its root, which
   // is what the resolver expects to find after extraction.
-  await execFileAsync('tar', ['-czf', archive, '-C', path.dirname(app), path.basename(app)], { maxBuffer: 1 << 28 });
+  //
+  // `gzip -n` rather than `tar -czf`: gzip otherwise stamps the current time
+  // into its header, so packaging the same bundle twice produces two different
+  // checksums. That makes the hash you paste into the manifest depend on *which
+  // run* produced the file you uploaded -- re-run the packager afterwards and
+  // the manifest silently stops matching the published asset.
+  await pipeThrough(archive, path.dirname(app), path.basename(app));
 
   const digest = await sha256(archive);
   const { size } = fs.statSync(archive);
 
-  process.stdout.write('\nPaste into src/browser/manifest.json:\n');
+  // Upload before pasting: a manifest that names a checksum for an asset that
+  // does not exist yet turns a clear "nothing published" message into a 404.
+  process.stdout.write('\n1. Upload it, under the tag the url below names:\n');
+  process.stdout.write(`   gh release create chromium-${manifest.version}-${manifest.revision} ${archive} \\\n`);
+  process.stdout.write(`     --title "Patched Chromium ${manifest.version} (revision ${manifest.revision})" --notes "..."\n`);
+  process.stdout.write('\n2. Then paste this into src/browser/manifest.json:\n');
   process.stdout.write(JSON.stringify({
     url: `https://github.com/a4501150/agent-browser/releases/download/chromium-${manifest.version}-${manifest.revision}/${name}`,
     sha256: digest,
@@ -91,7 +114,8 @@ async function main() {
     app: entry.app,
     executable: entry.executable,
   }, null, 2) + '\n');
-  process.stdout.write(`\nThen upload ${archive} to the release tagged chromium-${manifest.version}-${manifest.revision}.\n`);
+  process.stdout.write('\n3. Then rebuild and verify from a cold cache, with no --binary\n');
+  process.stdout.write('   and no AGENT_BROWSER_BINARY set, before committing the manifest.\n');
 }
 
 main().catch(error => {
