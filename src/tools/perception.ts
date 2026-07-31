@@ -52,6 +52,7 @@ const find = defineTabTool({
       'only need to locate one element.',
     inputSchema: z.object({
       text: z.string().optional().describe('Case-insensitive substring to look for in the outline (matches accessible names and text).'),
+      exact: z.boolean().optional().describe('Require an element\'s whole accessible name, or a text node\'s whole content, to equal text rather than contain it. Still case-insensitive. Use it when a short word like "All" matches half the page.'),
       role: z.string().optional().describe('Only match nodes of this accessibility role, e.g. "button", "textbox", "link".'),
       limit: z.number().int().positive().optional().describe('Stop after this many matches. Defaults to 50.'),
     }),
@@ -74,7 +75,7 @@ const find = defineTabTool({
     const limit = params.limit ?? 50;
     let truncated = false;
     for (let i = 0; i < lines.length; i++) {
-      if (needle && !lines[i].toLowerCase().includes(needle))
+      if (needle && !matchesText(lines[i], needle, params.exact ?? false))
         continue;
       if (role && roleOf(lines[i]) !== role)
         continue;
@@ -85,7 +86,7 @@ const find = defineTabTool({
       matched.push(i);
     }
 
-    const query = [params.role ? `role "${params.role}"` : '', params.text ? `text "${params.text}"` : ''].filter(Boolean).join(' and ');
+    const query = [params.role ? `role "${params.role}"` : '', params.text ? `${params.exact ? 'exact ' : ''}text "${params.text}"` : ''].filter(Boolean).join(' and ');
     if (!matched.length) {
       response.addTextResult(`No matches found for ${query}.`);
       return;
@@ -181,6 +182,29 @@ function indentOf(line: string): number {
 /** Outline lines read `- button "Save" [ref=e7]`. */
 function roleOf(line: string): string | undefined {
   return /^\s*-\s+([a-zA-Z]+)/.exec(line)?.[1].toLowerCase();
+}
+
+function matchesText(line: string, needle: string, exact: boolean): boolean {
+  if (!exact)
+    return line.toLowerCase().includes(needle);
+  return namesOf(line).some(name => name.toLowerCase() === needle);
+}
+
+/**
+ * Everything an outline line calls its node: the quoted accessible name of
+ * `- button "Save" [ref=e7]`, and the trailing text of `- listitem [ref=e3]:
+ * first`, `- text: Save` or `- textbox [ref=e6]: hello`. A line ending in a bare
+ * colon has children instead of text, so it contributes nothing.
+ */
+function namesOf(line: string): string[] {
+  const names: string[] = [];
+  const quoted = /^\s*-\s+[a-zA-Z]+\s+"((?:[^"\\]|\\.)*)"/.exec(line);
+  if (quoted)
+    names.push(quoted[1].replace(/\\(.)/g, '$1'));
+  const trailing = /^\s*-\s+[a-zA-Z]+(?:\s+"(?:[^"\\]|\\.)*")?(?:\s+\[[^\]]*\])*:\s*(.+?)\s*$/.exec(line);
+  if (trailing)
+    names.push(trailing[1]);
+  return names;
 }
 
 function ancestorIndices(lines: string[], indents: number[], index: number): number[] {

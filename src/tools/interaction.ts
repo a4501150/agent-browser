@@ -13,12 +13,12 @@ const click = defineTabTool({
   schema: {
     name: 'browser_click',
     description: 'Click an element. Works identically on elements inside cross-origin iframes: pass their frame-prefixed ref. ' +
-      'Set checked to tick or untick a checkbox or radio instead of clicking it.',
+      'Omit checked for every ordinary click; set it only to tick or untick a checkbox or radio.',
     inputSchema: elementSchema.extend({
       button: z.enum(['left', 'right', 'middle']).optional().describe('Mouse button. Defaults to left.'),
       double: z.boolean().optional().describe('Perform a double click.'),
       modifiers: z.array(z.enum(['Alt', 'Control', 'ControlOrMeta', 'Meta', 'Shift'])).optional().describe('Modifier keys to hold.'),
-      checked: z.boolean().optional().describe('For a checkbox or radio: set it to this state rather than clicking, which is idempotent.'),
+      checked: z.boolean().optional().describe('For a checkbox or radio only: set it to this state rather than clicking, which is idempotent. Omit it for anything else.'),
     }),
     type: 'input',
   },
@@ -30,7 +30,16 @@ const click = defineTabTool({
     if (params.checked !== undefined) {
       response.addCode(`await page.${resolved}.setChecked(${params.checked});`);
       await tab.waitForCompletion(async () => {
-        await locator.setChecked(params.checked!, tab.actionTimeoutOptions);
+        try {
+          await locator.setChecked(params.checked!, tab.actionTimeoutOptions);
+        } catch (error) {
+          // Playwright says only "Not a checkbox or radio button", which does
+          // not name the field to drop. Clients that require every parameter
+          // land here often, having filled `checked` in for a plain button.
+          if (/Not a checkbox or radio button/.test(String(error)))
+            throw new Error(`checked applies only to a checkbox or radio button, and ${params.element || params.target} is not one. Omit checked to click it.`, { cause: error });
+          throw error;
+        }
       });
       return;
     }

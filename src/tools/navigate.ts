@@ -16,7 +16,7 @@ const navigate = defineTabTool({
 
   handle: async (tab, params, response) => {
     if (!!params.url === !!params.action)
-      throw new Error('Provide exactly one of "url" or "action".');
+      throw new Error('Provide exactly one of "url" or "action". A client that requires every parameter should send the unused one as null.');
 
     response.setIncludeSnapshot();
 

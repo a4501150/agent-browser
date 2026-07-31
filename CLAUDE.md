@@ -144,6 +144,29 @@ in both directions.
 child, so `AGENT_BROWSER_BINARY` does not reach a server spawned that way unless `env` is
 passed explicitly. `scripts/detection-check.mjs` does this; it bit once already.
 
+### A strict-schema client cannot omit an optional field
+
+A client that converts these tools into OpenAI's strict function-calling subset has to list
+**every** property in `required`, and can only express "unset" as a nullable union
+(`"type": ["boolean", "null"]`). So an optional field arrives either as `null` or, if the
+bridge marks it required without widening the type, as a value the model had to invent.
+Both were reported from the field: `browser_click` doing `setChecked` on a Gmail button
+because `checked: false` was forced in, and `browser_navigate` rejecting every call because
+`url` and `action` were both filled. Our emitted schema was correct throughout
+(`required: ["target", "instance_id"]`), so this is worth recognising rather than
+re-diagnosing as a schema bug.
+
+`callTool` therefore drops null-valued keys whose field does not itself accept null
+(`withoutNulls` in `src/mcp/dispatch.ts`), which is what makes "optional" mean absent
+again. A field that *is* nullable keeps the null, because there it carries meaning:
+`browser_open`'s `profile` means "throwaway profile".
+
+**Do not answer a mutual-exclusion report with a root-level `oneOf`.** The same subset
+forbids it — "the root level object of a schema must be an object, and not use `anyOf`" —
+so it would break precisely the clients that hit this. Mutual exclusion stays in the
+description plus a runtime check, and the error says to send the unused field as null.
+
+
 ### `--enable-automation` is not a Playwright default any more
 
 On 1.62.1 the string appears only in two internal `ignoreDefaultArgs` lists, never in

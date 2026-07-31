@@ -12,13 +12,14 @@ const waitFor = defineTabTool({
   schema: {
     name: 'browser_wait_for',
     description: 'Wait for an element to appear, for text to appear or disappear, or for a fixed time. At least one of ' +
-      'target, text, text_gone or time is required.',
+      'target, text, text_gone or time is required. Conditions combine: every one given must be met, awaited in the ' +
+      'order time, text_gone, text, target.',
     inputSchema: z.object({
       target: z.string().optional().describe('Wait until this element is visible. A ref from the page outline, a CSS selector, or an XPath.'),
       text: z.string().optional().describe('Wait until this text is visible.'),
       text_gone: z.string().optional().describe('Wait until this text is no longer visible.'),
-      time: z.number().positive().optional().describe('Wait this many seconds. Capped at 30.'),
-      timeout: z.number().int().positive().optional().describe('How long to wait in milliseconds before failing. Defaults to the action timeout.'),
+      time: z.number().positive().optional().describe('Sleep this many seconds, whatever the page does. Capped at 30; for an operation that takes minutes, wait on a condition with a long timeout instead of repeating this.'),
+      timeout: z.number().int().positive().optional().describe('How long to wait in milliseconds for each condition before failing. Not capped. Defaults to the action timeout.'),
     }),
     type: 'readOnly',
   },

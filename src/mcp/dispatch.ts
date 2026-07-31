@@ -26,7 +26,7 @@ export async function callTool(
 
   let params: any;
   try {
-    params = tool.schema.inputSchema.parse(rawArguments);
+    params = tool.schema.inputSchema.parse(withoutNulls(tool.schema.inputSchema, rawArguments));
   } catch (error) {
     if (error instanceof z.ZodError)
       return formatError(`Invalid arguments for tool "${name}":\n${z.prettifyError(error)}`);
@@ -53,6 +53,26 @@ export async function callTool(
     log('%s failed: %s', name, error?.stack ?? error);
     return formatError(String(error?.message ?? error));
   }
+}
+
+/**
+ * Drop optional fields that arrived as an explicit null.
+ *
+ * A client running OpenAI's strict schema subset has to list every property in
+ * `required` and can only express "omitted" as a nullable union, so `checked`,
+ * `url` and every other optional field reaches us as null rather than absent.
+ * A field that accepts null itself keeps it, because there the distinction is
+ * the point: browser_open's `profile` means "throwaway profile".
+ */
+function withoutNulls(schema: z.ZodObject, rawArguments: Record<string, any>): Record<string, any> {
+  const shape = schema.shape as Record<string, z.ZodType | undefined>;
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(rawArguments)) {
+    if (value === null && !shape[key]?.safeParse(null).success)
+      continue;
+    result[key] = value;
+  }
+  return result;
 }
 
 function formatError(message: string): CallToolResult {

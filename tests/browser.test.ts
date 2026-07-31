@@ -63,6 +63,19 @@ describe('the MCP surface', () => {
     expect(result.isError).toBe(true);
     expect(result.text).toMatch(/Invalid arguments/);
   });
+
+  it('treats an explicit null as an omitted optional field', async () => {
+    // A client running OpenAI's strict schema subset has to list every property
+    // in `required`, and can only say "not set" with null. Reading that as a
+    // value made browser_click setChecked a plain button and browser_navigate
+    // reject every call.
+    await harness.call('browser_navigate', { instance_id: instance, url: fixtures.url('page.html') });
+    const click = await harness.call('browser_click', { instance_id: instance, target: '#b', element: null, checked: null, double: null, button: null });
+    expect(click.isError, click.text).toBe(false);
+    expect(await evaluate('window.__clicks.length')).toBe(1);
+    const nav = await harness.call('browser_navigate', { instance_id: instance, url: fixtures.url('page.html'), action: null });
+    expect(nav.isError, nav.text).toBe(false);
+  });
 });
 
 describe('perception', () => {
@@ -83,11 +96,26 @@ describe('perception', () => {
 
   it('finds a node by role and by text', async () => {
     const byRole = await harness.call('browser_find', { instance_id: instance, role: 'button' });
-    expect(byRole.section('Result')).toMatch(/button "Click me" \[ref=e\d+\]/);
+    // The frame prefix is optional here: whether the main frame has an ordinal
+    // depends on what navigated before this test, not on the element.
+    expect(byRole.section('Result')).toMatch(/button "Click me" \[ref=(f\d+)?e\d+\]/);
     const byText = await harness.call('browser_find', { instance_id: instance, text: 'Click me' });
     expect(byText.section('Result')).toMatch(/Found 1 match/);
     const missing = await harness.call('browser_find', { instance_id: instance, text: 'no such text at all' });
     expect(missing.section('Result')).toMatch(/No matches/);
+  });
+
+  it('matches the whole accessible name when asked for an exact match', async () => {
+    const substring = await harness.call('browser_find', { instance_id: instance, text: 'Click' });
+    expect(substring.section('Result')).toMatch(/button "Click me"/);
+    const exact = await harness.call('browser_find', { instance_id: instance, text: 'Click', exact: true });
+    expect(exact.section('Result')).toMatch(/No matches found for exact text "Click"/);
+    const whole = await harness.call('browser_find', { instance_id: instance, text: 'Click me', exact: true });
+    expect(whole.section('Result')).toMatch(/Found 1 match/);
+    expect(whole.section('Result')).toMatch(/button "Click me" \[ref=(f\d+)?e\d+\]/);
+    // A text node matches on its whole content, not just an element's name.
+    const textNode = await harness.call('browser_find', { instance_id: instance, text: 'first', exact: true });
+    expect(textNode.section('Result')).toMatch(/Found 1 match/);
   });
 
   it('prefixes refs with a frame ordinal after a cross-origin document swap, main frame included', async () => {
@@ -163,6 +191,13 @@ describe('interaction', () => {
     expect(await evaluate('document.getElementById("c").checked')).toBe(true);
     await harness.call('browser_click', { instance_id: instance, target: '#c', checked: false });
     expect(await evaluate('document.getElementById("c").checked')).toBe(false);
+  });
+
+  it('names the field to drop when checked is used on something that is not a checkbox', async () => {
+    const result = await harness.call('browser_click', { instance_id: instance, target: '#b', element: 'the button', checked: false });
+    expect(result.isError).toBe(true);
+    expect(result.text).toMatch(/Omit checked to click it/);
+    expect(result.text).toMatch(/the button/);
   });
 
   it('fills a whole form in one call', async () => {
