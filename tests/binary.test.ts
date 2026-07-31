@@ -156,13 +156,19 @@ describe('binary resolution', () => {
     await expect(resolveBinary(config)).rejects.toThrow(/not found/);
   });
 
-  it('names the platform and the override when there is nothing to install', async () => {
-    // No release asset is published yet, so a bare resolve must say so and
-    // point at --binary rather than silently using a stock Chromium.
-    const config = resolveConfig({ dataDir: path.join(work, 'empty-cache') });
+  it('uses the version-pinned cache, and never anything outside it', async () => {
+    // The invariant that matters: whatever comes back is our patched build, at
+    // the pinned version, and never a stock Chromium found elsewhere on the
+    // machine. Seeding the cache also keeps this test off the network.
+    const dataDir = path.join(work, 'seeded');
+    const cache = path.join(dataDir, 'chromium', manifestVersion(), platformKey());
+    fs.mkdirSync(cache, { recursive: true });
+    buildStandInBundle(cache);
+
     delete process.env.AGENT_BROWSER_BINARY;
-    await expect(resolveBinary({ ...config, binary: undefined })).rejects.toThrow(
-      new RegExp(`(${platformKey()}|AGENT_BROWSER_BINARY)`));
+    const resolved = await resolveBinary({ ...resolveConfig({ dataDir }), binary: undefined });
+    expect(resolved).toBe(path.join(cache, 'Chromium.app', 'Contents', 'MacOS', 'Chromium'));
+    expect(execFileSync(resolved, { encoding: 'utf-8' })).toContain(manifestVersion().split('-')[0]);
   });
 
   it('pins a version and revision', () => {

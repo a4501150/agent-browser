@@ -70,7 +70,9 @@ claude mcp add agent-browser -- npx -y agent-browser
 ```
 
 The patched Chromium is downloaded on first use into `~/.agent-browser/chromium/`,
-checksum-verified before extraction. **Only macOS arm64 is published.** On any other
+checksum-verified before extraction, from the
+[`chromium-148.0.7778.215-1`](https://github.com/a4501150/agent-browser/releases/tag/chromium-148.0.7778.215-1)
+release. **Only macOS arm64 is published.** On any other
 platform the server refuses to start rather than silently falling back to a stock
 Chromium, which would lose every guarantee above without telling you. Build it yourself
 and point at it:

@@ -230,8 +230,16 @@ only, and `release/` is gitignored.
 
 `sha256: null` in `src/browser/manifest.json` means "no asset published for this platform
 yet", and the resolver says exactly that instead of trying to download something it
-cannot verify. Fill it in only when the release actually exists, or first use will fail
-with a 404 instead of a useful message.
+cannot verify. Fill it in only *after* the release exists, or first use fails with a 404
+instead of a useful message. `chromium-148.0.7778.215-1` is published, so darwin-arm64 is
+filled in; a new Chromium version needs a new tag, a new asset and a bumped `revision`.
+
+Note this couples the test suite to the release: `tests/helpers/client.ts` resolves the
+browser through `resolveBinary`, so with no `AGENT_BROWSER_BINARY` the tests download the
+published asset. Two tests in `tests/binary.test.ts` used to assert the *refusal* paths
+(no entry for the platform, null sha256); both are unreachable on a platform that has a
+published asset, so they were replaced by an assertion that resolution only ever returns
+a path inside the version-pinned cache.
 
 The archive must be `.tar.gz`, not `.zip`: the bundle contains 5 symlinks (including
 `Chromium Framework.framework/Versions/Current`) plus executable bits, and a naive zip
