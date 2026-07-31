@@ -12,6 +12,17 @@ Two goals, never conflated, same as the patch layer:
 1. **Not detectable as automation.** Everything here must keep that true.
 2. **Reaching all of the page**, cross-origin iframes included.
 
+## The npm name is taken
+
+`agent-browser` on npm is [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser),
+an unrelated "browser automation CLI for AI agents" (0.33.1 at the time of writing). So:
+
+- **This is not publishable under that name**, and `npm i -g agent-browser` installs
+  someone else's code. The README said to do exactly that for a while; it now documents
+  installing from source.
+- Publishing needs a different name — a scope (`@a4501150/agent-browser`) or a rename.
+  Until then `bin.agent-browser` in package.json only matters for a local `npm link`.
+
 ## Layering
 
 | Layer | Where |

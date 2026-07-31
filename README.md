@@ -7,9 +7,13 @@ An undetectable browser MCP server. **Cross-origin iframes are ordinary DOM.**
 Protocol.
 
 ```bash
-npx agent-browser            # stdio, the usual MCP mode
-npx agent-browser serve      # Streamable HTTP at /mcp
+agent-browser            # stdio, the usual MCP mode
+agent-browser serve      # Streamable HTTP at /mcp
 ```
+
+> Not on npm. The name `agent-browser` there belongs to an unrelated project
+> ([vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser)), so install
+> from source as below — do **not** `npm i agent-browser` expecting this.
 
 ## Why
 
@@ -59,14 +63,32 @@ touched, so there is nothing for a page to detect.
 
 ## Install
 
+From source, which is the only way today:
+
 ```bash
-npm i -g agent-browser
+git clone https://github.com/a4501150/agent-browser.git
+cd agent-browser
+npm ci
+npm run build
 ```
 
-Then point your MCP client at it. For Claude Code:
+Then point your MCP client at the built entry point. For Claude Code:
 
 ```bash
-claude mcp add agent-browser -- npx -y agent-browser
+claude mcp add agent-browser -- node /absolute/path/to/agent-browser/dist/index.js
+```
+
+Or by hand, in an MCP client's config:
+
+```json
+{
+  "mcpServers": {
+    "agent-browser": {
+      "command": "node",
+      "args": ["/absolute/path/to/agent-browser/dist/index.js"]
+    }
+  }
+}
 ```
 
 The patched Chromium is downloaded on first use into `~/.agent-browser/chromium/`,
