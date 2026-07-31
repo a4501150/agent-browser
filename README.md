@@ -206,7 +206,8 @@ agent-browser [serve] [options]
   --headed              launch browsers with a visible window
   --binary <path>       patched Chromium (.app bundle or executable)
   --data-dir <path>     profiles, browser cache and artifacts (default ~/.agent-browser)
-  --idle-timeout <s>    close instances idle this long; 0 disables (default 300)
+  --idle-timeout <s>    close instances idle this long (default 0: keep them for
+                        as long as the server runs)
   --version  --help
 ```
 

@@ -26,7 +26,8 @@ Options
   --headed              launch browsers with a visible window.
   --binary <path>       patched Chromium to use (the .app bundle or the executable).
   --data-dir <path>     profiles, browser cache and artifacts. Default ${defaultDataDir()}.
-  --idle-timeout <s>    close instances idle this long. 0 disables. Default 300.
+  --idle-timeout <s>    close instances idle this long. Default 0, which keeps
+                        them for as long as the server runs.
   --version             print the version and exit.
   --help                print this help and exit.
 

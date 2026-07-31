@@ -161,6 +161,35 @@ headless, the `primaryPointerType`/`primaryHoverType` blink settings.
 version of this deletes a directory `browser_open` documents as never deleted. Pinned by
 a test.
 
+### Several CLI sessions run at once, and each has its own server
+
+This is the normal case, not an edge case: every agent CLI session spawns its own stdio
+server process, so a machine routinely has four or five, each with its own in-memory
+instance registry. Two consequences that are easy to get wrong, and one was shipped wrong:
+
+- **Reaping must be scoped by owning server.** The launched-browser records live in
+  `<dataDir>/processes/<server-pid>.json`, one file per server, and `reapOrphans` skips any
+  file whose pid is still alive. A single shared `processes.json` was both a lost-update
+  race between servers and, much worse, indistinguishable from ownership: every record held
+  a live browser that passed the "alive and still owns its directory" test, so **starting
+  any new session SIGTERMed every browser every other session had open**, then cleared the
+  file so the survivors could never be reaped. Reproduced by hand and pinned by
+  `tests/lifecycle.test.ts` ("spares the browsers of a server that is still running"),
+  which also checks the record file survives, since deleting it leaks the browser later.
+- **An `instance_id` is scoped to one server.** It is not a machine-wide handle, so an id
+  from another session is correctly "no such instance". Profiles are the shared thing, and
+  the second session to ask for a name gets a copy-on-write clone under `profiles/.slots/`,
+  which is why two sessions can both use `default` without merging cookies.
+
+### An instance lives as long as its session, not five minutes
+
+`idleTimeout` defaults to **0** (no idle reaping). An agent can spend many minutes on other
+tools between browser calls and still expect its tabs, scroll position and half-finished
+logins to be there; a five-minute default silently destroyed all of it. Nothing leaks,
+because Playwright drives Chromium over a pipe, so the browser dies with the server, and
+the server dies with the CLI session. `--idle-timeout <s>` still opts back in, which is
+what a long-lived `serve` deployment should do.
+
 ### The web tier's SSRF policy has to cover the browser path too
 
 `httpFetch` checks every redirect hop, but `page.goto` follows redirects itself, so

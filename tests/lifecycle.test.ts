@@ -152,7 +152,10 @@ describe('orphan reaping', () => {
     fs.mkdirSync(bystanderDir, { recursive: true });
     fs.symlinkSync('host-999999', path.join(bystanderDir, 'SingletonLock'));
 
-    fs.writeFileSync(path.join(dataDir, 'processes.json'), JSON.stringify([
+    // Records live under the owning server's pid. This one is ours, so reaping
+    // is entitled to act on it.
+    fs.mkdirSync(path.join(dataDir, 'processes'), { recursive: true });
+    fs.writeFileSync(path.join(dataDir, 'processes', `${process.pid}.json`), JSON.stringify([
       { pid: orphan.pid, userDataDir: orphanDir, ephemeral: true, startedAt: Date.now() },
       { pid: bystander.pid, userDataDir: bystanderDir, ephemeral: false, startedAt: Date.now() },
     ]));
@@ -166,7 +169,46 @@ describe('orphan reaping', () => {
     // An ephemeral directory is cleaned up; a named profile is never deleted.
     expect(fs.existsSync(orphanDir)).toBe(false);
     expect(fs.existsSync(bystanderDir)).toBe(true);
-    expect(JSON.parse(fs.readFileSync(path.join(dataDir, 'processes.json'), 'utf-8'))).toEqual([]);
+    expect(fs.existsSync(path.join(dataDir, 'processes', `${process.pid}.json`))).toBe(false);
+  }, 60_000);
+
+  it('spares the browsers of a server that is still running', async () => {
+    // Several CLI sessions drive this at once. Their browsers are in use, not
+    // orphaned, and a starting server used to SIGTERM every one of them.
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-browser-sibling-'));
+    cleanups.push(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+
+    const siblingServer = spawn('sleep', ['300'], { stdio: 'ignore' });
+    const siblingBrowser = spawn('sleep', ['300'], { stdio: 'ignore' });
+    cleanups.push(() => { siblingServer.kill('SIGKILL'); siblingBrowser.kill('SIGKILL'); });
+    await waitUntil(() => !!siblingServer.pid && !!siblingBrowser.pid, 5000);
+
+    // Recorded exactly as a live server records a browser it is driving: the
+    // browser owns its directory, so only the owning server's liveness differs.
+    const inUseDir = path.join(dataDir, 'profiles', '.slots', 'in-use');
+    fs.mkdirSync(inUseDir, { recursive: true });
+    fs.symlinkSync(`host-${siblingBrowser.pid}`, path.join(inUseDir, 'SingletonLock'));
+
+    const siblingRecord = path.join(dataDir, 'processes', `${siblingServer.pid}.json`);
+    fs.mkdirSync(path.dirname(siblingRecord), { recursive: true });
+    fs.writeFileSync(siblingRecord, JSON.stringify([
+      { pid: siblingBrowser.pid, userDataDir: inUseDir, ephemeral: true },
+    ]));
+
+    const registry = new Registry(resolveConfig({ dataDir }), new Artifacts(path.join(dataDir, 'artifacts')));
+    expect(await registry.reapOrphans()).toBe(0);
+
+    expect(isProcessAlive(siblingBrowser.pid!), "another session's browser must survive").toBe(true);
+    // Its record has to survive too, or nothing reaps it once that server dies.
+    expect(fs.existsSync(siblingRecord)).toBe(true);
+    expect(fs.existsSync(inUseDir), 'an in-use ephemeral dir must not be deleted').toBe(true);
+
+    // Once that server is gone the same browser is a genuine orphan.
+    siblingServer.kill('SIGKILL');
+    expect(await waitUntil(() => !isProcessAlive(siblingServer.pid!), 10_000)).toBe(true);
+    expect(await registry.reapOrphans()).toBe(1);
+    expect(await waitUntil(() => !isProcessAlive(siblingBrowser.pid!), 10_000)).toBe(true);
+    expect(fs.existsSync(siblingRecord)).toBe(false);
   }, 60_000);
 
   it('never marks an explicit user_data_dir as ephemeral', async () => {
@@ -185,7 +227,10 @@ describe('orphan reaping', () => {
     expect(opened.isError, opened.text).toBe(false);
     expect(JSON.parse(opened.section('Result')!).user_data_dir).toBe(userDataDir);
 
-    const records = JSON.parse(fs.readFileSync(path.join(dataDir, 'processes.json'), 'utf-8'));
+    // The server is a child process, so its record file is named for its pid.
+    const recordDir = path.join(dataDir, 'processes');
+    const records = fs.readdirSync(recordDir)
+      .flatMap(f => JSON.parse(fs.readFileSync(path.join(recordDir, f), 'utf-8')));
     const record = records.find((r: any) => r.userDataDir === userDataDir);
     expect(record, 'the browser should be recorded').toBeDefined();
     expect(record.ephemeral).toBe(false);

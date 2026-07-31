@@ -17,6 +17,8 @@ const log = debug('agent-browser:registry');
 
 export const reaperIntervalMs = 10_000;
 
+// Which server owns these is the record file's name, not a field, so the two
+// cannot disagree.
 type ProcessRecord = {
   pid: number;
   userDataDir: string;
@@ -146,16 +148,20 @@ export class Registry {
   // A browser normally dies with its server, because Playwright drives it over
   // a pipe. These records exist for the cases where it does not.
 
-  private async _readProcesses(): Promise<ProcessRecord[]> {
+  private _recordFile(ownerPid: number): string {
+    return path.join(paths.processes(this._config), `${ownerPid}.json`);
+  }
+
+  private async _readProcesses(ownerPid = process.pid): Promise<ProcessRecord[]> {
     try {
-      return JSON.parse(await fs.promises.readFile(paths.processes(this._config), 'utf-8'));
+      return JSON.parse(await fs.promises.readFile(this._recordFile(ownerPid), 'utf-8'));
     } catch {
       return [];
     }
   }
 
   private async _writeProcesses(records: ProcessRecord[]): Promise<void> {
-    const file = paths.processes(this._config);
+    const file = this._recordFile(process.pid);
     await fs.promises.mkdir(path.dirname(file), { recursive: true });
     await fs.promises.writeFile(file, JSON.stringify(records, null, 2), 'utf-8');
   }
@@ -181,31 +187,43 @@ export class Registry {
   }
 
   /**
-   * Kill browsers a previous run left behind. Only PIDs we recorded, and only
-   * when the process still owns the user-data dir we recorded it against, so
-   * an unrelated process that inherited the PID is never touched.
+   * Kill browsers a previous run left behind. Only PIDs we recorded, only when
+   * the process still owns the user-data dir we recorded it against, and only
+   * from servers that are no longer running -- several sessions drive this
+   * concurrently, and their browsers are in use, not orphaned.
    */
   async reapOrphans(): Promise<number> {
-    const records = await this._readProcesses();
-    if (!records.length)
+    const dir = paths.processes(this._config);
+    let entries: string[];
+    try {
+      entries = await fs.promises.readdir(dir);
+    } catch {
       return 0;
-    let killed = 0;
-    for (const record of records) {
-      if (!isProcessAlive(record.pid))
-        continue;
-      if (chromiumOwnerPid(record.userDataDir) !== record.pid)
-        continue;
-      try {
-        process.kill(record.pid, 'SIGTERM');
-        killed++;
-        log('reaped orphan chromium pid %d (%s)', record.pid, record.userDataDir);
-      } catch {
-        continue;
-      }
-      if (record.ephemeral)
-        await fs.promises.rm(record.userDataDir, { recursive: true, force: true }).catch(() => {});
     }
-    await this._writeProcesses([]).catch(() => {});
+    let killed = 0;
+    for (const entry of entries) {
+      const ownerPid = Number(path.basename(entry, '.json'));
+      if (!entry.endsWith('.json') || !Number.isInteger(ownerPid))
+        continue;
+      if (ownerPid !== process.pid && isProcessAlive(ownerPid))
+        continue;
+      for (const record of await this._readProcesses(ownerPid)) {
+        if (!isProcessAlive(record.pid))
+          continue;
+        if (chromiumOwnerPid(record.userDataDir) !== record.pid)
+          continue;
+        try {
+          process.kill(record.pid, 'SIGTERM');
+          killed++;
+          log('reaped orphan chromium pid %d (%s) from server %d', record.pid, record.userDataDir, ownerPid);
+        } catch {
+          continue;
+        }
+        if (record.ephemeral)
+          await fs.promises.rm(record.userDataDir, { recursive: true, force: true }).catch(() => {});
+      }
+      await fs.promises.rm(path.join(dir, entry), { force: true }).catch(() => {});
+    }
     return killed;
   }
 }
