@@ -7,6 +7,9 @@ import type { RenderMode } from './render';
 
 export type CrawlStrategy = 'bfs' | 'dfs' | 'sitemap' | 'map';
 
+/** Cap on URLs remembered, independent of how many pages are fetched. */
+const maxDiscovered = 10_000;
+
 export type CrawlOptions = {
   strategy?: CrawlStrategy;
   maxDepth?: number;
@@ -89,7 +92,6 @@ export async function crawl(
   const frontier: { url: string; depth: number }[] = [{ url: root, depth: 0 }];
   const order: string[] = [];
   const byUrl = new Map<string, CrawlPage>();
-  let discovered = 1;
   let truncated = false;
 
   return await withRenderer(host, async getRenderer => {
@@ -97,9 +99,11 @@ export async function crawl(
       const page: CrawlPage = { url: job.url, depth: job.depth, status: undefined, title: undefined, links: 0 };
       byUrl.set(job.url, page);
       try {
-        const fetched = options.render && options.render !== 'never'
-          ? await fetchPage(host, job.url, { render: options.render, signal: options.signal, renderer: options.render === 'always' ? await getRenderer() : undefined })
-          : await plainFetch(job.url, options.signal);
+        const fetched = await fetchPage(host, job.url, {
+          render: options.render ?? 'never',
+          signal: options.signal,
+          renderer: options.render && options.render !== 'never' ? await getRenderer() : undefined,
+        });
         page.status = fetched.status;
         page.rendered = fetched.rendered || undefined;
 
@@ -119,7 +123,12 @@ export async function crawl(
             if (seen.has(key) || !allowed(link.url))
               continue;
             seen.add(key);
-            discovered++;
+            // A wide site can discover far more links than max_pages will ever
+            // fetch, and keeping them all costs memory for nothing.
+            if (seen.size > maxDiscovered) {
+              truncated = true;
+              break;
+            }
             frontier.push({ url: link.url, depth: job.depth + 1 });
           }
         }
@@ -164,15 +173,10 @@ export async function crawl(
       root,
       strategy,
       pages: order.map(url => byUrl.get(url)!).filter(Boolean),
-      discovered,
+      discovered: seen.size,
       truncated,
     };
   });
-}
-
-async function plainFetch(url: string, signal: AbortSignal | undefined) {
-  const result = await httpFetch(url, { signal });
-  return { url: result.url, status: result.status, html: decodeBody(result), rendered: false };
 }
 
 function normalize(url: string): string {

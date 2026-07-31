@@ -13,7 +13,6 @@ import web from '../tools/web';
 
 import type { ToolDefinition } from './tool';
 
-/** All 32 tools, always on. There is no capability system to configure. */
 export const allTools: ToolDefinition[] = [
   ...instances,
   ...navigate,

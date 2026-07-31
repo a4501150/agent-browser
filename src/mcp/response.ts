@@ -60,7 +60,6 @@ export class Response {
     this._includeSnapshot = 'full';
   }
 
-  /** browser_read_page: the snapshot *is* the result, with explicit options. */
   setIncludeExplicitSnapshot(options: { root?: playwright.Locator; depth?: number; toFile?: boolean }) {
     this._includeSnapshot = 'explicit';
     this._snapshotRoot = options.root;
@@ -72,7 +71,6 @@ export class Response {
     this._images.push({ data, imageType });
   }
 
-  /** Inline short text; spill anything long to an artifact file and link it. */
   async addResult(title: string, data: Buffer | string, template: FilenameTemplate) {
     if (typeof data === 'string' && !template.suggestedFilename && data.length <= inlineResultLimit) {
       this.addTextResult(data);
@@ -90,7 +88,7 @@ export class Response {
 
   async serialize(): Promise<CallToolResult & { isClose?: boolean }> {
     const sections = await this._build();
-    await this._host.artifacts.sweep();
+    await this._host.artifacts.maybeSweep();
 
     const text: string[] = [];
     for (const section of sections) {
@@ -178,6 +176,8 @@ export function renderTabMarkdown(tab: TabHeader): string[] {
     lines.push(`- Page Title: ${tab.title}`);
   if (tab.crashed)
     lines.push('- Page status: crashed');
+  if (tab.note)
+    lines.push(`- Note: ${tab.note}`);
   const status = tab.mainDocumentStatus;
   if (status && (status.status < 200 || status.status >= 300))
     lines.push(`- HTTP status: ${status.status}${status.statusText ? ' ' + status.statusText : ''}`);

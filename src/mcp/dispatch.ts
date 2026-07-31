@@ -3,6 +3,7 @@
  * tag v1.62.1), dispatching against our instance registry instead of one
  * implicit context.
  */
+import debug from 'debug';
 import * as z from 'zod';
 
 import { findTool } from './registry';
@@ -10,6 +11,8 @@ import { Response } from './response';
 
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { ServerHost } from './host';
+
+const log = debug('agent-browser:tool');
 
 export async function callTool(
   host: ServerHost,
@@ -45,7 +48,10 @@ export async function callTool(
     await tool.handle(target, params, response, signal);
     return await response.serialize();
   } catch (error: any) {
-    return formatError(String(error?.stack ?? error?.message ?? error));
+    // The stack names server-side paths, which belong in the log rather than in
+    // a result an untrusted page may end up influencing.
+    log('%s failed: %s', name, error?.stack ?? error);
+    return formatError(String(error?.message ?? error));
   }
 }
 

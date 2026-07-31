@@ -22,12 +22,12 @@ const readConsole = defineTabTool({
       all: z.boolean().optional().describe('Include messages from before the last navigation too.'),
       clear: z.boolean().optional().describe('Clear the buffer after reading it.'),
     }),
-    type: 'readOnly',
+    type: 'action',
   },
 
   handle: async (tab, params, response) => {
     const level = params.level ?? 'info';
-    const count = await tab.consoleMessageCount();
+    const count = await tab.consoleMessageCount(params.all);
     const messages = await tab.consoleMessages(level, params.all);
     const header = [`Total messages: ${count.total} (errors: ${count.errors}, warnings: ${count.warnings})`];
     if (messages.length !== count.total)
@@ -57,7 +57,7 @@ const listRequests = defineTabTool({
   },
 
   handle: async (tab, params, response) => {
-    const all = await tab.requests();
+    const { requests: all, dropped } = await tab.requests();
     const urlFilter = params.url ? new RegExp(params.url) : undefined;
     const limit = params.limit ?? 100;
     const offset = params.offset ?? 0;
@@ -66,10 +66,6 @@ const listRequests = defineTabTool({
     let hiddenStatic = 0;
     for (let i = 0; i < all.length; i++) {
       const request = all[i];
-      if (!params.resource_type && !isFetch(request) && isSuccessfulResponse(request)) {
-        hiddenStatic++;
-        continue;
-      }
       if (params.resource_type && request.resourceType() !== params.resource_type)
         continue;
       if (params.method && request.method().toUpperCase() !== params.method.toUpperCase())
@@ -83,6 +79,12 @@ const listRequests = defineTabTool({
       }
       if (params.body_contains && !await responseBodyContains(request, params.body_contains))
         continue;
+      // Counted last, so the number describes what the other filters kept
+      // rather than the whole page.
+      if (!params.resource_type && !isFetch(request) && isSuccessfulResponse(request)) {
+        hiddenStatic++;
+        continue;
+      }
       matches.push({ index: i + 1, request });
     }
 
@@ -92,6 +94,8 @@ const listRequests = defineTabTool({
       lines.push(`\nShowing ${page.length} of ${matches.length} matches (offset ${offset}).`);
     if (hiddenStatic)
       lines.push(`\n${hiddenStatic} successful static request(s) hidden. Pass resource_type to see them.`);
+    if (dropped)
+      lines.push(`\n${dropped} further request(s) were not recorded; the per-page cap was reached.`);
     if (!lines.length)
       lines.push('No matching requests.');
     await response.addResult('Network', lines.join('\n'), { prefix: 'network', ext: 'log' });
@@ -104,7 +108,7 @@ const getRequest = defineTabTool({
     title: 'Get request details',
     description: 'Return one network request in full: status, timing, request and response headers, and optionally the bodies.',
     inputSchema: z.object({
-      request_id: z.string().describe('The request id from browser_list_requests, e.g. "#3" or "3".'),
+      request_id: z.string().regex(/^#?[1-9]\d*$/, 'A request id looks like "#3" or "3".').describe('The request id from browser_list_requests, e.g. "#3" or "3".'),
       include_body: z.boolean().optional().describe('Include the request and response bodies. Non-textual bodies are written to a file. Defaults to true.'),
     }),
     type: 'readOnly',
@@ -112,10 +116,8 @@ const getRequest = defineTabTool({
 
   handle: async (tab, params, response) => {
     const index = Number(params.request_id.replace(/^#/, ''));
-    if (!Number.isInteger(index) || index < 1)
-      throw new Error(`"${params.request_id}" is not a request id. Use the "#N" values from browser_list_requests.`);
-    const all = await tab.requests();
-    const request = all[index - 1];
+    const { requests } = await tab.requests();
+    const request = requests[index - 1];
     if (!request) {
       response.addError(`Request #${index} not found. Call browser_list_requests for the current ids.`);
       return;

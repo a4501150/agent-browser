@@ -133,7 +133,7 @@ const storage = defineTabTool({
         break;
       }
       case 'get': {
-        if (!params.key)
+        if (params.key === undefined)
           throw new Error('"key" is required for action "get".');
         const value = await area.getItem(params.key);
         response.addTextResult(value === null ? `${label} key "${params.key}" not found.` : `${params.key}=${value}`);
@@ -141,14 +141,14 @@ const storage = defineTabTool({
         break;
       }
       case 'set':
-        if (!params.key || params.value === undefined)
+        if (params.key === undefined || params.value === undefined)
           throw new Error('"key" and "value" are required for action "set".');
         await area.setItem(params.key, params.value);
         response.addTextResult(`Set ${label} "${params.key}".`);
         response.addCode(`await page.${label}.setItem(${JSON.stringify(params.key)}, ${JSON.stringify(params.value)});`);
         break;
       case 'delete':
-        if (!params.key)
+        if (params.key === undefined)
           throw new Error('"key" is required for action "delete".');
         await area.removeItem(params.key);
         response.addTextResult(`Deleted ${label} "${params.key}".`);

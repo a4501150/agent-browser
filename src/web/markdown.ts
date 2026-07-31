@@ -5,7 +5,6 @@ import TurndownService from 'turndown';
 export type Article = {
   title: string | undefined;
   byline: string | undefined;
-  excerpt: string | undefined;
   /** The article HTML if Readability found one, otherwise the whole body. */
   html: string;
   text: string;
@@ -13,7 +12,7 @@ export type Article = {
   wholeDocument: boolean;
 };
 
-export type ParsedDocument = {
+type ParsedDocument = {
   document: Document;
   title: string | undefined;
 };
@@ -64,37 +63,37 @@ function absolutizeUrls(document: any, url: string): void {
   }
 }
 
+/**
+ * Readability mutates the document it is given, so the fallback content has to
+ * be read out *before* it runs rather than from a second parse of the same
+ * HTML -- parsing a large page twice is the most expensive thing in this file.
+ */
 export function extractArticle(html: string, url: string): Article {
   const { document, title } = parseDocument(html, url);
-  // Readability mutates the document, so give it a copy.
-  const { document: forReadability } = parseHTML(html);
-  absolutizeUrls(forReadability, url);
+  const body = (document.body ?? document) as any;
+  const fallback = {
+    title,
+    byline: undefined,
+    html: body.innerHTML ?? '',
+    text: (body.textContent ?? '').replace(/\n{3,}/g, '\n\n').trim(),
+    wholeDocument: true as const,
+  };
+
   let parsed: ReturnType<Readability['parse']>;
   try {
-    parsed = new Readability(forReadability as any, { charThreshold: 250 }).parse();
+    parsed = new Readability(document as any, { charThreshold: 250 }).parse();
   } catch {
     parsed = null;
   }
+  if (!parsed?.content)
+    return fallback;
 
-  if (parsed?.content) {
-    return {
-      title: parsed.title || title,
-      byline: parsed.byline || undefined,
-      excerpt: parsed.excerpt || undefined,
-      html: parsed.content,
-      text: (parsed.textContent || '').trim(),
-      wholeDocument: false,
-    };
-  }
-
-  const body = document.body ?? document;
   return {
-    title,
-    byline: undefined,
-    excerpt: undefined,
-    html: (body as any).innerHTML ?? '',
-    text: ((body as any).textContent ?? '').replace(/\n{3,}/g, '\n\n').trim(),
-    wholeDocument: true,
+    title: parsed.title || title,
+    byline: parsed.byline || undefined,
+    html: parsed.content,
+    text: (parsed.textContent || '').trim(),
+    wholeDocument: false,
   };
 }
 

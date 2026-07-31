@@ -2,15 +2,11 @@ import os from 'node:os';
 import path from 'node:path';
 
 export type Config = {
-  /** Resolved data root: profiles, chromium cache, processes.json, artifacts. */
   dataDir: string;
-  /** Explicit patched-Chromium path, or undefined to resolve from cache/manifest. */
   binary: string | undefined;
-  /** Launch browsers headed. */
   headed: boolean;
-  /** Close instances idle for this many seconds. 0 disables. */
+  /** Seconds; 0 disables. */
   idleTimeout: number;
-  /** Working directory a client resolves relative artifact paths against. */
   cwd: string;
 };
 

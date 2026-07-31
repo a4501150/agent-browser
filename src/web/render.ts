@@ -1,6 +1,7 @@
 import { httpFetch, decodeBody } from './httpFetch';
-import { assertUrlAllowed } from '../util/ssrf';
+import { assertUrlAllowed, BlockedUrlError } from '../util/ssrf';
 
+import type * as playwright from 'playwright-core';
 import type { Instance } from '../browser/instance';
 import type { ServerHost } from '../mcp/host';
 
@@ -9,11 +10,8 @@ export type RenderMode = 'auto' | 'always' | 'never';
 export type FetchedPage = {
   url: string;
   status: number | undefined;
-  headers: Record<string, string>;
   html: string;
-  /** Set when a real browser produced the HTML. */
   rendered: boolean;
-  /** Why the browser was used, for the tool result. */
   renderReason?: string;
 };
 
@@ -57,7 +55,6 @@ export async function fetchPage(
   const plain: FetchedPage = {
     url: result.url,
     status: result.status,
-    headers: result.headers,
     html,
     rendered: false,
   };
@@ -114,31 +111,57 @@ export class Renderer {
     return new Renderer(instance);
   }
 
-  get instance(): Instance {
-    return this._instance;
+  async render(url: string, options: { timeoutMs?: number; signal?: AbortSignal }): Promise<FetchedPage> {
+    return await this._withPage(url, options, async (page, status) => ({
+      url: page.url(),
+      status,
+      html: await page.content(),
+      rendered: true,
+    }));
   }
 
-  async render(url: string, options: { timeoutMs?: number; signal?: AbortSignal }): Promise<FetchedPage> {
+  async pdf(url: string, options: { timeoutMs?: number; signal?: AbortSignal }): Promise<{ url: string; data: Buffer }> {
+    return await this._withPage(url, options, async page => ({
+      url: page.url(),
+      data: await page.pdf({ printBackground: true }),
+    }));
+  }
+
+  /**
+   * Each render gets its own page, because a crawl runs several at once and a
+   * shared tab would have concurrent navigations cancelling each other. The
+   * SSRF policy is applied to the initial URL *and* to every redirect the
+   * browser follows, which `page.goto` would otherwise do unchecked.
+   */
+  private async _withPage<T>(
+    url: string,
+    options: { timeoutMs?: number; signal?: AbortSignal },
+    read: (page: playwright.Page, status: number | undefined) => Promise<T>,
+  ): Promise<T> {
     await assertUrlAllowed(url, { allowPrivate: true });
-    const tab = await this._instance.ensureTab();
-    const response = await tab.page.goto(url, { waitUntil: 'domcontentloaded', timeout: options.timeoutMs ?? 30_000 });
-    await tab.page.waitForLoadState('load', { timeout: 10_000 }).catch(() => {});
-    // Give client-rendered pages a moment to populate.
-    await tab.page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
-    const html = await tab.page.content();
-    const headers: Record<string, string> = {};
-    try {
-      Object.assign(headers, await response?.allHeaders() ?? {});
-    } catch {
-      // A navigation served from cache may have no response object.
-    }
-    return {
-      url: tab.page.url(),
-      status: response?.status(),
-      headers,
-      html,
-      rendered: true,
+    const page = await this._instance.browserContext.newPage();
+    const blocked: string[] = [];
+    const onRequest = (request: playwright.Request) => {
+      if (!request.isNavigationRequest() || !request.redirectedFrom())
+        return;
+      void assertUrlAllowed(request.url(), { allowPrivate: false }).catch(e => {
+        blocked.push(e instanceof Error ? e.message : String(e));
+        void page.close().catch(() => {});
+      });
     };
+    page.on('request', onRequest);
+    try {
+      const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: options.timeoutMs ?? 30_000 });
+      await page.waitForLoadState('load', { timeout: 10_000 }).catch(() => {});
+      // Give client-rendered pages a moment to populate.
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
+      if (blocked.length)
+        throw new BlockedUrlError(blocked[0]);
+      return await read(page, response?.status());
+    } finally {
+      page.off('request', onRequest);
+      await page.close().catch(() => {});
+    }
   }
 
   async close(): Promise<void> {
@@ -146,12 +169,16 @@ export class Renderer {
   }
 }
 
-/** Run `fn` with one shared renderer, created lazily and always closed. */
+/**
+ * Run `fn` with one shared renderer. The *promise* is memoised, not the
+ * resolved renderer: concurrent crawl workers would otherwise each see it
+ * unset, each launch a browser, and all but the last would leak.
+ */
 export async function withRenderer<T>(host: ServerHost, fn: (get: () => Promise<Renderer>) => Promise<T>): Promise<T> {
-  let renderer: Renderer | undefined;
+  let pending: Promise<Renderer> | undefined;
   try {
-    return await fn(async () => (renderer ??= await Renderer.create(host)));
+    return await fn(() => (pending ??= Renderer.create(host)));
   } finally {
-    await renderer?.close();
+    await pending?.then(renderer => renderer.close()).catch(() => {});
   }
 }

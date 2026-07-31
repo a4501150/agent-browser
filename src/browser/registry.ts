@@ -6,7 +6,7 @@ import debug from 'debug';
 
 import { Instance } from './instance';
 import { resolveBinary } from './binary';
-import { isProcessAlive } from './profiles';
+import { chromiumOwnerPid, isProcessAlive } from '../util/lockfile';
 import { paths } from '../config';
 
 import type { Config } from '../config';
@@ -21,10 +21,9 @@ type ProcessRecord = {
   pid: number;
   userDataDir: string;
   ephemeral: boolean;
-  startedAt: number;
 };
 
-export type InstanceSummary = {
+type InstanceSummary = {
   instance_id: string;
   profile: string | null;
   user_data_dir: string;
@@ -46,10 +45,6 @@ export class Registry {
   constructor(config: Config, artifacts: Artifacts) {
     this._config = config;
     this._artifacts = artifacts;
-  }
-
-  get config(): Config {
-    return this._config;
   }
 
   async open(options: OpenOptions): Promise<Instance> {
@@ -148,10 +143,8 @@ export class Registry {
     }
   }
 
-  // --- orphan tracking -------------------------------------------------
-  // An MCP server is frequently SIGKILLed by its client, which leaves the
-  // browser running with no one to close it. Record enough to reap those at
-  // the next startup.
+  // A browser normally dies with its server, because Playwright drives it over
+  // a pipe. These records exist for the cases where it does not.
 
   private async _readProcesses(): Promise<ProcessRecord[]> {
     try {
@@ -168,15 +161,16 @@ export class Registry {
   }
 
   private async _rememberProcess(instance: Instance): Promise<void> {
-    const pid = chromiumPid(instance.userDataDir);
+    const pid = chromiumOwnerPid(instance.userDataDir);
     if (!pid)
       return;
     const records = (await this._readProcesses()).filter(r => r.userDataDir !== instance.userDataDir);
     records.push({
       pid,
       userDataDir: instance.userDataDir,
-      ephemeral: instance.userDataDir.includes(`${path.sep}.slots${path.sep}`) || instance.profileName === null,
-      startedAt: Date.now(),
+      // Deriving this from profileName would be wrong: an explicit
+      // user_data_dir also has no name, and we promised never to delete one.
+      ephemeral: instance.profileIsEphemeral,
     });
     await this._writeProcesses(records).catch(() => {});
   }
@@ -199,7 +193,7 @@ export class Registry {
     for (const record of records) {
       if (!isProcessAlive(record.pid))
         continue;
-      if (chromiumPid(record.userDataDir) !== record.pid)
+      if (chromiumOwnerPid(record.userDataDir) !== record.pid)
         continue;
       try {
         process.kill(record.pid, 'SIGTERM');
@@ -213,16 +207,5 @@ export class Registry {
     }
     await this._writeProcesses([]).catch(() => {});
     return killed;
-  }
-}
-
-/** Chromium's SingletonLock is a symlink whose target ends in `-<pid>`. */
-function chromiumPid(userDataDir: string): number | undefined {
-  try {
-    const target = fs.readlinkSync(path.join(userDataDir, 'SingletonLock'));
-    const pid = Number(target.split('-').pop());
-    return Number.isFinite(pid) && pid > 0 ? pid : undefined;
-  } catch {
-    return undefined;
   }
 }

@@ -6,10 +6,8 @@ const defaultUserAgent =
 export type HttpResult = {
   url: string;
   status: number;
-  statusText: string;
   headers: Record<string, string>;
   body: Buffer;
-  redirects: string[];
 };
 
 export type HttpOptions = {
@@ -33,7 +31,6 @@ const defaultMaxBytes = 12 * 1024 * 1024;
 export async function httpFetch(rawUrl: string, options: HttpOptions = {}): Promise<HttpResult> {
   const maxRedirects = options.maxRedirects ?? 10;
   const retries = options.retries ?? 2;
-  const redirects: string[] = [];
 
   let current = rawUrl;
   let method = options.method ?? 'GET';
@@ -41,36 +38,49 @@ export async function httpFetch(rawUrl: string, options: HttpOptions = {}): Prom
 
   for (let hop = 0; hop <= maxRedirects; hop++) {
     const url = await assertUrlAllowed(current, { allowPrivate: hop === 0 });
-    const response = await fetchWithRetries(url, { ...options, method, body }, retries);
+    const { response, dispose } = await fetchWithRetries(url, { ...options, method, body }, retries);
 
-    if (isRedirect(response.status)) {
-      const location = response.headers.get('location');
-      if (!location)
-        return await readResult(url.toString(), response, options, redirects);
-      const next = new URL(location, url).toString();
-      redirects.push(next);
-      // 303, and 301/302 in practice, turn a POST into a GET.
-      if (response.status === 303 || ((response.status === 301 || response.status === 302) && method !== 'GET' && method !== 'HEAD')) {
-        method = 'GET';
-        body = undefined;
+    const location = isRedirect(response.status) ? response.headers.get('location') : null;
+    if (!location) {
+      try {
+        return await readResult(url.toString(), response, options);
+      } finally {
+        dispose();
       }
-      void response.body?.cancel().catch(() => {});
-      current = next;
-      continue;
     }
 
-    return await readResult(url.toString(), response, options, redirects);
+    const next = new URL(location, url).toString();
+    // 303, and 301/302 in practice, turn a POST into a GET.
+    if (response.status === 303 || ((response.status === 301 || response.status === 302) && method !== 'GET' && method !== 'HEAD')) {
+      method = 'GET';
+      body = undefined;
+    }
+    void response.body?.cancel().catch(() => {});
+    dispose();
+    current = next;
   }
   throw new Error(`Too many redirects (>${maxRedirects}) starting at ${rawUrl}`);
 }
 
-async function fetchWithRetries(url: URL, options: HttpOptions, retries: number): Promise<globalThis.Response> {
+type Attempt = { response: globalThis.Response; dispose: () => void };
+
+/**
+ * The timeout and the caller's abort signal must stay armed through the body
+ * read, not just until the headers arrive: a server that sends headers and then
+ * stalls would otherwise hold a crawl worker forever. `dispose` is therefore
+ * the caller's to call, once the body has been consumed.
+ */
+async function fetchWithRetries(url: URL, options: HttpOptions, retries: number): Promise<Attempt> {
   let lastError: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error('timeout')), options.timeoutMs ?? defaultTimeout);
     const onAbort = () => controller.abort(options.signal?.reason);
     options.signal?.addEventListener('abort', onAbort, { once: true });
+    const dispose = () => {
+      clearTimeout(timer);
+      options.signal?.removeEventListener('abort', onAbort);
+    };
     try {
       const response = await fetch(url, {
         method: options.method ?? 'GET',
@@ -88,54 +98,50 @@ async function fetchWithRetries(url: URL, options: HttpOptions, retries: number)
       // Retry only what a retry can fix.
       if (response.status >= 500 && attempt < retries) {
         void response.body?.cancel().catch(() => {});
+        dispose();
         lastError = new Error(`${response.status} ${response.statusText}`);
         await backoff(attempt);
         continue;
       }
-      return response;
+      return { response, dispose };
     } catch (e) {
+      dispose();
       lastError = e;
       if (options.signal?.aborted)
         throw e;
       if (attempt >= retries)
         break;
       await backoff(attempt);
-    } finally {
-      clearTimeout(timer);
-      options.signal?.removeEventListener('abort', onAbort);
     }
   }
   throw new Error(`Failed to fetch ${url}: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
-async function readResult(url: string, response: globalThis.Response, options: HttpOptions, redirects: string[]): Promise<HttpResult> {
+async function readResult(url: string, response: globalThis.Response, options: HttpOptions): Promise<HttpResult> {
   const maxBytes = options.maxBytes ?? defaultMaxBytes;
   const chunks: Buffer[] = [];
   let total = 0;
   if (response.body) {
     const reader = (response.body as ReadableStream<Uint8Array>).getReader();
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done)
-        break;
-      total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel().catch(() => {});
-        break;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done)
+          break;
+        total += value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel().catch(() => {});
+          break;
+        }
+        chunks.push(Buffer.from(value));
       }
-      chunks.push(Buffer.from(value));
+    } finally {
+      reader.releaseLock();
     }
   }
   const headers: Record<string, string> = {};
   response.headers.forEach((value, key) => { headers[key] = value; });
-  return {
-    url,
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-    body: Buffer.concat(chunks),
-    redirects,
-  };
+  return { url, status: response.status, headers, body: Buffer.concat(chunks) };
 }
 
 function isRedirect(status: number): boolean {

@@ -1,4 +1,3 @@
-import type { Config } from '../config';
 import type { Artifacts } from '../util/artifacts';
 import type { Tab } from '../browser/tab';
 import type { Registry } from '../browser/registry';
@@ -6,12 +5,12 @@ import type { Registry } from '../browser/registry';
 export type ConsoleLevel = 'error' | 'warning' | 'info' | 'debug';
 
 export type ToolConfig = {
-  timeouts: { action: number; navigation: number; expect: number; settle: number };
+  timeouts: { action: number; navigation: number; settle: number };
   consoleLevel: ConsoleLevel;
 };
 
 export const defaultToolConfig: ToolConfig = {
-  timeouts: { action: 15_000, navigation: 30_000, expect: 5_000, settle: 500 },
+  timeouts: { action: 15_000, navigation: 30_000, settle: 500 },
   consoleLevel: 'info',
 };
 
@@ -29,6 +28,5 @@ export interface ResponseHost {
 
 /** What a global tool (browser_open, browser_list, web_*) receives. */
 export interface ServerHost extends ResponseHost {
-  readonly appConfig: Config;
   readonly instances: Registry;
 }

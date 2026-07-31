@@ -8,13 +8,21 @@ import { createServer, serverInfo } from './server';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { App } from './app';
 
-export type ServeOptions = {
+type ServeOptions = {
   port: number;
   host: string;
   token?: string;
 };
 
 const loopbackHosts = new Set(['127.0.0.1', '::1', 'localhost']);
+
+/** How long an HTTP session may sit unused before it is closed. */
+const sessionIdleMs = 30 * 60 * 1000;
+
+function sendJson(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
+  res.writeHead(status, { 'content-type': 'application/json', ...headers });
+  res.end(JSON.stringify(body));
+}
 
 export async function runHttp(app: App, options: ServeOptions): Promise<void> {
   const token = options.token ?? process.env.AGENT_BROWSER_TOKEN;
@@ -24,14 +32,26 @@ export async function runHttp(app: App, options: ServeOptions): Promise<void> {
       'browser and read your logged-in sessions. Set AGENT_BROWSER_TOKEN, or bind 127.0.0.1.');
   }
 
-  const sessions = new Map<string, { server: Server; transport: StreamableHTTPServerTransport }>();
+  type Session = { server: Server; transport: StreamableHTTPServerTransport; lastActivity: number };
+  const sessions = new Map<string, Session>();
+
+  // A client that vanishes without sending DELETE would otherwise leave its
+  // Server and transport retained for the life of the process.
+  const expiry = setInterval(() => {
+    const now = Date.now();
+    for (const [id, session] of sessions) {
+      if (now - session.lastActivity < sessionIdleMs)
+        continue;
+      sessions.delete(id);
+      void session.server.close().catch(() => {});
+    }
+  }, 60_000);
+  expiry.unref?.();
 
   const httpServer = http.createServer((req, res) => {
     void handle(req, res).catch(error => {
-      if (!res.headersSent) {
-        res.writeHead(500, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: String(error?.message ?? error) }));
-      }
+      if (!res.headersSent)
+        sendJson(res, 500, { error: String(error?.message ?? error) });
     });
   });
 
@@ -39,38 +59,35 @@ export async function runHttp(app: App, options: ServeOptions): Promise<void> {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
     if (url.pathname === '/health' && req.method === 'GET') {
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({
+      sendJson(res, 200, {
         status: 'ok',
         server: serverInfo,
         instances: app.instances.list().length,
         sessions: sessions.size,
-      }));
+      });
       return;
     }
 
     if (url.pathname !== '/mcp') {
-      res.writeHead(404, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Not found. The MCP endpoint is /mcp.' }));
+      sendJson(res, 404, { error: 'Not found. The MCP endpoint is /mcp.' });
       return;
     }
 
     if (token && !isAuthorized(req, token)) {
-      res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer' });
-      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      sendJson(res, 401, { error: 'Unauthorized' }, { 'www-authenticate': 'Bearer' });
       return;
     }
 
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
     const existing = sessionId ? sessions.get(sessionId) : undefined;
     if (existing) {
+      existing.lastActivity = Date.now();
       await existing.transport.handleRequest(req, res);
       return;
     }
 
     if (sessionId) {
-      res.writeHead(404, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: `Unknown session ${sessionId}` }));
+      sendJson(res, 404, { error: `Unknown session ${sessionId}` });
       return;
     }
 
@@ -78,14 +95,22 @@ export async function runHttp(app: App, options: ServeOptions): Promise<void> {
     const server = createServer(app);
     const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => crypto.randomUUID(),
-      onsessioninitialized: (id: string): void => { sessions.set(id, { server, transport }); },
+      onsessioninitialized: (id: string): void => { sessions.set(id, { server, transport, lastActivity: Date.now() }); },
     });
     transport.onclose = () => {
       if (transport.sessionId)
         sessions.delete(transport.sessionId);
     };
-    await server.connect(transport);
-    await transport.handleRequest(req, res);
+    try {
+      await server.connect(transport);
+      await transport.handleRequest(req, res);
+    } catch (e) {
+      // A session that never initialised has nothing to close it later.
+      if (transport.sessionId)
+        sessions.delete(transport.sessionId);
+      await server.close().catch(() => {});
+      throw e;
+    }
   }
 
   await new Promise<void>((resolve, reject) => {
@@ -105,6 +130,7 @@ export async function runHttp(app: App, options: ServeOptions): Promise<void> {
     process.once('SIGTERM', shutdown);
   });
 
+  clearInterval(expiry);
   for (const session of sessions.values())
     await session.server.close().catch(() => {});
   await new Promise<void>(resolve => httpServer.close(() => resolve()));

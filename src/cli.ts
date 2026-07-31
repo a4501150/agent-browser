@@ -1,6 +1,7 @@
+import { version as packageVersion } from '../package.json';
 import { defaultDataDir } from './config';
 
-export type Cli = {
+type Cli = {
   command: 'stdio' | 'serve';
   port: number;
   host: string;
@@ -10,7 +11,7 @@ export type Cli = {
   idleTimeout?: number;
 };
 
-export const version = '0.1.0';
+export const version = packageVersion;
 
 const usage = `agent-browser ${version} — an undetectable browser MCP server
 

@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { childEnv, patchedChromium } from './helpers/client';
 import { Artifacts } from '../src/util/artifacts';
-import { isProcessAlive } from '../src/browser/profiles';
+import { chromiumOwnerPid, isProcessAlive } from '../src/util/lockfile';
 import { Registry, reaperIntervalMs } from '../src/browser/registry';
 import { resolveConfig } from '../src/config';
 
@@ -59,15 +59,6 @@ async function connect(dataDir: string, args: string[] = []): Promise<Session> {
   return { client, dataDir, call };
 }
 
-function chromiumPid(userDataDir: string): number | undefined {
-  try {
-    const pid = Number(fs.readlinkSync(path.join(userDataDir, 'SingletonLock')).split('-').pop());
-    return Number.isFinite(pid) ? pid : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 async function waitUntil(predicate: () => boolean, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -87,7 +78,7 @@ describe('idle reaper', () => {
 
     const opened = await session.call('browser_open', { profile: null });
     const summary = JSON.parse(opened.section('Result')!);
-    const pid = chromiumPid(summary.user_data_dir);
+    const pid = chromiumOwnerPid(summary.user_data_dir);
     expect(pid).toBeDefined();
 
     const gone = await waitUntil(() => !isProcessAlive(pid!), reaperIntervalMs * 2 + 5000);
@@ -130,7 +121,7 @@ describe('orphan reaping', () => {
     const opened = await client.callTool({ name: 'browser_open', arguments: { profile: null } });
     const text = ((opened.content ?? []) as { type: string; text?: string }[]).map(c => c.text ?? '').join('\n');
     const summary = JSON.parse(text.split('### Result\n')[1].split('###')[0]);
-    const browserPid = chromiumPid(summary.user_data_dir)!;
+    const browserPid = chromiumOwnerPid(summary.user_data_dir)!;
     expect(isProcessAlive(browserPid)).toBe(true);
 
     const serverPid = (transport as any)._process?.pid as number;
@@ -177,6 +168,31 @@ describe('orphan reaping', () => {
     expect(fs.existsSync(bystanderDir)).toBe(true);
     expect(JSON.parse(fs.readFileSync(path.join(dataDir, 'processes.json'), 'utf-8'))).toEqual([]);
   }, 60_000);
+
+  it('never marks an explicit user_data_dir as ephemeral', async () => {
+    // It is recorded for reaping like any other browser, but reaping deletes
+    // ephemeral directories, and this one was promised to be left alone.
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-browser-explicit-'));
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-browser-mine-'));
+    cleanups.push(() => {
+      fs.rmSync(dataDir, { recursive: true, force: true });
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+    });
+
+    const session = await connect(dataDir);
+    cleanups.push(() => void session.client.close());
+    const opened = await session.call('browser_open', { user_data_dir: userDataDir });
+    expect(opened.isError, opened.text).toBe(false);
+    expect(JSON.parse(opened.section('Result')!).user_data_dir).toBe(userDataDir);
+
+    const records = JSON.parse(fs.readFileSync(path.join(dataDir, 'processes.json'), 'utf-8'));
+    const record = records.find((r: any) => r.userDataDir === userDataDir);
+    expect(record, 'the browser should be recorded').toBeDefined();
+    expect(record.ephemeral).toBe(false);
+
+    await session.call('browser_close', { instance_id: JSON.parse(opened.section('Result')!).instance_id });
+    expect(fs.existsSync(userDataDir)).toBe(true);
+  }, 90_000);
 
   it('reclaims a profile lock whose owner is dead', async () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-browser-lock-'));

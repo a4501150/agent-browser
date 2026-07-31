@@ -2,9 +2,8 @@ import { parseDocument } from './markdown';
 
 export type ExtractMode = 'selector' | 'tables' | 'metadata' | 'structured';
 
-export type ExtractResult = Record<string, unknown>;
+type ExtractResult = Record<string, unknown>;
 
-/** Deterministic extraction: no model in the loop, so the output is stable. */
 export function extract(html: string, url: string, mode: ExtractMode, selector?: string): ExtractResult {
   const { document } = parseDocument(html, url);
   switch (mode) {

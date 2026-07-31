@@ -14,12 +14,21 @@ export type FilenameTemplate = {
  */
 export const inlineResultLimit = 24_000;
 
+/** How often the artifact directory is actually walked. */
+const sweepIntervalMs = 60_000;
+
 export class Artifacts {
   readonly dir: string;
   private _maxBytes: number;
   private _ttlMs: number;
-  /** Files this process wrote; never evicted by the budget sweep. */
-  private _written = new Set<string>();
+  /**
+   * Files written by the response currently being built. They are exempt from
+   * eviction only until the next sweep, because a set of "never evict" paths
+   * would grow for the lifetime of the process and make the quota meaningless.
+   */
+  private _protected = new Set<string>();
+  private _sweeping: Promise<void> | undefined;
+  private _lastSweep = 0;
 
   constructor(dir: string, options?: { maxBytes?: number; ttlMs?: number }) {
     this.dir = dir;
@@ -48,11 +57,30 @@ export class Artifacts {
       await fs.promises.writeFile(file, data, 'utf-8');
     else
       await fs.promises.writeFile(file, data);
-    this._written.add(path.resolve(file));
+    this._protected.add(path.resolve(file));
+  }
+
+  /**
+   * Called after every tool result, so it must be nearly free in the common
+   * case: a full directory walk plus a stat per file runs at most once per
+   * interval, and concurrent callers share one walk.
+   */
+  async maybeSweep(): Promise<void> {
+    if (this._sweeping)
+      return this._sweeping;
+    if (Date.now() - this._lastSweep < sweepIntervalMs)
+      return;
+    this._sweeping = this._sweep().finally(() => {
+      this._lastSweep = Date.now();
+      this._sweeping = undefined;
+    });
+    return this._sweeping;
   }
 
   /** Drop expired files, then oldest-first until the directory fits the quota. */
-  async sweep(): Promise<void> {
+  private async _sweep(): Promise<void> {
+    const keep = this._protected;
+    this._protected = new Set();
     let entries: { path: string; size: number; mtimeMs: number }[];
     try {
       entries = await listFilesRecursive(this.dir);
@@ -63,7 +91,7 @@ export class Artifacts {
     const survivors: typeof entries = [];
     let total = 0;
     for (const entry of entries) {
-      if (!this._written.has(entry.path) && now - entry.mtimeMs > this._ttlMs) {
+      if (!keep.has(entry.path) && now - entry.mtimeMs > this._ttlMs) {
         await fs.promises.unlink(entry.path).catch(() => {});
         continue;
       }
@@ -76,7 +104,7 @@ export class Artifacts {
     for (const entry of survivors) {
       if (total <= this._maxBytes)
         break;
-      if (this._written.has(entry.path))
+      if (keep.has(entry.path))
         continue;
       try {
         await fs.promises.unlink(entry.path);
@@ -88,10 +116,6 @@ export class Artifacts {
   }
 }
 
-/**
- * A client-supplied path, for tools that read from disk (upload, session load)
- * or write where the client asked. Relative paths resolve against `cwd`.
- */
 export function resolveClientPath(cwd: string, file: string): string {
   return path.resolve(cwd, file);
 }

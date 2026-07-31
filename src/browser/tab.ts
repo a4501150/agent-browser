@@ -25,6 +25,9 @@ import type { ResolvedTarget } from './target';
 
 const TabEvents = { modalState: 'modalState' };
 
+/** Enough for any real page; a long-lived SPA would otherwise grow forever. */
+const maxTrackedRequests = 2000;
+
 type TabEventsInterface = {
   [TabEvents.modalState]: [modalState: ModalState];
 };
@@ -35,11 +38,14 @@ type Download = {
   outputFile: string;
 };
 
-export type EventEntry =
-  | { type: 'console'; wallTime: number; message: ConsoleMessage }
+/**
+ * Only downloads are reported as events. Console messages and requests have
+ * their own tools reading Playwright's own buffers, so recording them a second
+ * time here would be unbounded work that nothing renders.
+ */
+type EventEntry =
   | { type: 'download-start'; wallTime: number; download: Download }
-  | { type: 'download-finish'; wallTime: number; download: Download }
-  | { type: 'request'; wallTime: number; request: playwright.Request };
+  | { type: 'download-finish'; wallTime: number; download: Download };
 
 export type TabHeader = {
   title: string;
@@ -48,9 +54,10 @@ export type TabHeader = {
   crashed: boolean;
   mainDocumentStatus?: { status: number; statusText: string };
   console: { total: number; warnings: number; errors: number };
+  note?: string;
 };
 
-export type TabSnapshot = {
+type TabSnapshot = {
   ariaSnapshot: string;
   modalStates: ModalState[];
 };
@@ -59,8 +66,9 @@ export class Tab extends EventEmitter<TabEventsInterface> {
   readonly instance: Instance;
   readonly page: playwright.Page;
   private _lastHeader: TabHeader = { title: 'about:blank', url: 'about:blank', current: false, crashed: false, console: { total: 0, warnings: 0, errors: 0 } };
-  private _downloads: Download[] = [];
   private _requests: playwright.Request[] = [];
+  private _droppedRequests = 0;
+  private _note: string | undefined;
   private _mainDocumentStatus: { status: number; statusText: string } | undefined;
   private _onPageClose: (tab: Tab) => void;
   private _modalStates: ModalState[] = [];
@@ -71,7 +79,6 @@ export class Tab extends EventEmitter<TabEventsInterface> {
 
   readonly actionTimeoutOptions: { timeout?: number };
   readonly navigationTimeoutOptions: { timeout?: number };
-  readonly expectTimeoutOptions: { timeout?: number };
 
   constructor(instance: Instance, page: playwright.Page, onPageClose: (tab: Tab) => void) {
     super();
@@ -80,11 +87,8 @@ export class Tab extends EventEmitter<TabEventsInterface> {
     this._onPageClose = onPageClose;
     const p = page;
     this._disposables = [
-      eventsHelper.addEventListener(p, 'console', event => this._handleConsoleMessage(messageToConsoleMessage(event))),
-      eventsHelper.addEventListener(p, 'pageerror', error => this._handleConsoleMessage(pageErrorToConsoleMessage(error))),
       eventsHelper.addEventListener(p, 'request', request => this._handleRequest(request)),
       eventsHelper.addEventListener(p, 'response', response => this._handleResponse(response)),
-      eventsHelper.addEventListener(p, 'requestfailed', request => this._handleRequestFailed(request)),
       eventsHelper.addEventListener(p, 'close', () => this._onClose()),
       eventsHelper.addEventListener(p, 'crash', () => { this.crashed = true; }),
       eventsHelper.addEventListener(p, 'filechooser', chooser => {
@@ -105,7 +109,6 @@ export class Tab extends EventEmitter<TabEventsInterface> {
     const timeouts = instance.config.timeouts;
     this.actionTimeoutOptions = { timeout: timeouts.action };
     this.navigationTimeoutOptions = { timeout: timeouts.navigation };
-    this.expectTimeoutOptions = { timeout: timeouts.expect };
   }
 
   async dispose() {
@@ -156,7 +159,6 @@ export class Tab extends EventEmitter<TabEventsInterface> {
       ext: 'bin',
     });
     const entry: Download = { download, finished: false, outputFile };
-    this._downloads.push(entry);
     this._recentEventEntries.push({ type: 'download-start', wallTime: Date.now(), download: entry });
     await download.saveAs(entry.outputFile);
     entry.finished = true;
@@ -164,17 +166,22 @@ export class Tab extends EventEmitter<TabEventsInterface> {
   }
 
   private _clearCollectedArtifacts() {
-    this._downloads.length = 0;
     this._requests.length = 0;
+    this._droppedRequests = 0;
     this._mainDocumentStatus = undefined;
     this._recentEventEntries.length = 0;
   }
 
+  /**
+   * Stop appending rather than evicting: browser_get_request addresses requests
+   * by their 1-based position, and a ring buffer would silently renumber them.
+   */
   private _handleRequest(request: playwright.Request) {
+    if (this._requests.length >= maxTrackedRequests) {
+      this._droppedRequests++;
+      return;
+    }
     this._requests.push(request);
-    // A fetch() has no start time until its response arrives.
-    const wallTime = request.timing().startTime || Date.now();
-    this._recentEventEntries.push({ type: 'request', wallTime, request });
   }
 
   private _handleResponse(response: playwright.Response) {
@@ -183,16 +190,9 @@ export class Tab extends EventEmitter<TabEventsInterface> {
       this._mainDocumentStatus = { status: response.status(), statusText: response.statusText() };
   }
 
-  private _handleRequestFailed(_request: playwright.Request) {
-    // Already recorded by _handleRequest; failure() is read at render time.
-  }
-
-  private _handleConsoleMessage(message: ConsoleMessage) {
-    this._recentEventEntries.push({ type: 'console', wallTime: message.timestamp, message });
-  }
-
-  logErrorMessage(text: string) {
-    this._handleConsoleMessage(pageErrorToConsoleMessage(new Error(text)));
+  /** Surfaced in the Page section; nothing else would show a crash reset. */
+  setNote(text: string) {
+    this._note = text;
   }
 
   takeRecentEvents(): EventEntry[] {
@@ -222,6 +222,7 @@ export class Tab extends EventEmitter<TabEventsInterface> {
       crashed: this.crashed,
       mainDocumentStatus: this._mainDocumentStatus,
       console: consoleCounts,
+      note: this._note,
     };
     if (!tabHeaderEquals(this._lastHeader, newHeader)) {
       this._lastHeader = newHeader;
@@ -274,10 +275,11 @@ export class Tab extends EventEmitter<TabEventsInterface> {
     await this.waitForLoadState('load', { timeout: 5000 });
   }
 
-  async consoleMessageCount(): Promise<{ total: number; errors: number; warnings: number }> {
+  async consoleMessageCount(all?: boolean): Promise<{ total: number; errors: number; warnings: number }> {
     await this._initializedPromise;
-    const messages = await this.page.consoleMessages({ filter: 'since-navigation' });
-    const pageErrors = await this.page.pageErrors({ filter: 'since-navigation' });
+    const filter = all ? 'all' : 'since-navigation';
+    const messages = await this.page.consoleMessages({ filter });
+    const pageErrors = await this.page.pageErrors({ filter });
     let errors = pageErrors.length;
     let warnings = 0;
     for (const message of messages) {
@@ -311,14 +313,15 @@ export class Tab extends EventEmitter<TabEventsInterface> {
     await Promise.all([this.page.clearConsoleMessages(), this.page.clearPageErrors()]);
   }
 
-  async requests(): Promise<playwright.Request[]> {
+  async requests(): Promise<{ requests: playwright.Request[]; dropped: number }> {
     await this._initializedPromise;
-    return this._requests;
+    return { requests: this._requests, dropped: this._droppedRequests };
   }
 
   async clearRequests() {
     await this._initializedPromise;
     this._requests.length = 0;
+    this._droppedRequests = 0;
   }
 
   async captureSnapshot(root: playwright.Locator | undefined, depth: number | undefined): Promise<TabSnapshot> {
@@ -345,13 +348,13 @@ export class Tab extends EventEmitter<TabEventsInterface> {
     const listener = (modalState: ModalState) => promise.resolve([modalState]);
     this.once(TabEvents.modalState, listener);
 
-    return await Promise.race([
-      action().then(() => {
-        this.off(TabEvents.modalState, listener);
-        return [];
-      }),
-      promise,
-    ]);
+    try {
+      // Upstream detaches the listener only on success, which leaks one per
+      // failed action -- and a failing action is entirely ordinary here.
+      return await Promise.race([action().then(() => []), promise]);
+    } finally {
+      this.off(TabEvents.modalState, listener);
+    }
   }
 
   async waitForCompletion(callback: () => Promise<void>) {
@@ -460,5 +463,6 @@ function tabHeaderEquals(a: TabHeader, b: TabHeader): boolean {
       a.mainDocumentStatus?.statusText === b.mainDocumentStatus?.statusText &&
       a.console.errors === b.console.errors &&
       a.console.warnings === b.console.warnings &&
-      a.console.total === b.console.total;
+      a.console.total === b.console.total &&
+      a.note === b.note;
 }

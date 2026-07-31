@@ -1,7 +1,7 @@
 import dns from 'node:dns/promises';
 import net from 'node:net';
 
-export type UrlPolicy = {
+type UrlPolicy = {
   /**
    * Loopback and private ranges are allowed for a URL the caller named — a
    * local dev server is a legitimate thing to fetch from a tool running on your

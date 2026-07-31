@@ -23,7 +23,7 @@ export type OpenOptions = {
   idleTimeout?: number;
 };
 
-export type RouteEntry = {
+type RouteEntry = {
   pattern: string;
   block?: boolean;
   status?: number;
@@ -159,6 +159,11 @@ export class Instance implements ResponseHost {
     return this._profile.userDataDir;
   }
 
+  /** Only a throwaway profile or a concurrency slot may ever be deleted. */
+  get profileIsEphemeral(): boolean {
+    return this._profile.kind === 'temp' || this._profile.kind === 'slot';
+  }
+
   get seed(): string | undefined {
     return this._profile.seed;
   }
@@ -214,7 +219,7 @@ export class Instance implements ResponseHost {
     if (!this._currentTab)
       await this.newTab();
     if (crashed)
-      this._currentTab!.logErrorMessage('Page crashed and was reset to about:blank.');
+      this._currentTab!.setNote('The page crashed and was reset to about:blank.');
     await this._currentTab!.waitForInitialized();
     return this._currentTab!;
   }

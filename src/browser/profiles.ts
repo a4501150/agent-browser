@@ -5,6 +5,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import { paths } from '../config';
+import { chromiumOwnerPid, isProcessAlive, tryLock as tryLockFile } from '../util/lockfile';
 
 import type { Config } from '../config';
 
@@ -15,8 +16,6 @@ const seedFileName = '.agent-browser-seed';
 
 export type ProfileChoice = {
   userDataDir: string;
-  /** Where the identity seed lives; a slot shares its origin profile's. */
-  canonicalDir: string;
   kind: 'explicit' | 'named' | 'slot' | 'temp';
   /** `--fingerprint` value to launch with, or undefined for stock behaviour. */
   seed: string | undefined;
@@ -37,12 +36,11 @@ export async function acquireProfile(
   if (options.userDataDir) {
     const dir = path.resolve(options.userDataDir);
     await fs.promises.mkdir(dir, { recursive: true });
-    const lock = await tryLock(dir);
+    const lock = await tryLockProfile(dir);
     if (!lock)
       throw new Error(`user_data_dir "${dir}" is already in use by a live browser. Close it, or omit user_data_dir to get an ephemeral clone.`);
     return {
       userDataDir: dir,
-      canonicalDir: dir,
       kind: 'explicit',
       seed: await resolveSeed(dir, options.fingerprint),
       release: async () => { await lock.release(); },
@@ -53,7 +51,6 @@ export async function acquireProfile(
     const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'agent-browser-'));
     return {
       userDataDir: dir,
-      canonicalDir: dir,
       kind: 'temp',
       seed: options.fingerprint === undefined ? undefined : String(options.fingerprint),
       release: async () => { await fs.promises.rm(dir, { recursive: true, force: true }); },
@@ -65,11 +62,10 @@ export async function acquireProfile(
   await fs.promises.mkdir(canonicalDir, { recursive: true });
   const seed = await resolveSeed(canonicalDir, options.fingerprint);
 
-  const directLock = await tryLock(canonicalDir);
+  const directLock = await tryLockProfile(canonicalDir);
   if (directLock) {
     return {
       userDataDir: canonicalDir,
-      canonicalDir,
       kind: 'named',
       seed,
       release: async () => { await directLock.release(); },
@@ -83,7 +79,7 @@ export async function acquireProfile(
     const slot = path.join(slotsDir, `${name}-${i}`);
     const existed = fs.existsSync(slot);
     if (existed) {
-      const lock = await tryLock(slot);
+      const lock = await tryLockProfile(slot);
       if (!lock)
         continue;
       // Free slot: refresh it from the canonical profile before reuse.
@@ -94,12 +90,11 @@ export async function acquireProfile(
     // The clone carries the origin's stale lock file; drop it before locking.
     await fs.promises.rm(path.join(slot, lockFileName), { force: true });
     await fs.promises.rm(path.join(slot, 'SingletonLock'), { force: true });
-    const lock = await tryLock(slot);
+    const lock = await tryLockProfile(slot);
     if (!lock)
       continue;
     return {
       userDataDir: slot,
-      canonicalDir,
       kind: 'slot',
       seed,
       release: async () => {
@@ -109,6 +104,14 @@ export async function acquireProfile(
     };
   }
   throw new Error(`Could not find a free profile slot for "${name}" (64 in use).`);
+}
+
+/** Free only if neither we nor Chromium itself hold the directory. */
+async function tryLockProfile(dir: string) {
+  const chromiumOwner = chromiumOwnerPid(dir);
+  if (chromiumOwner && isProcessAlive(chromiumOwner))
+    return undefined;
+  return await tryLockFile(path.join(dir, lockFileName));
 }
 
 /**
@@ -128,54 +131,6 @@ async function resolveSeed(dir: string, fingerprint: number | string | undefined
     return seed || undefined;
   } catch {
     return undefined;
-  }
-}
-
-type Lock = { release: () => Promise<void> };
-
-/** A lock whose owning PID is dead is reclaimed, not respected. */
-export async function tryLock(dir: string): Promise<Lock | undefined> {
-  if (await chromiumSingletonAlive(dir))
-    return undefined;
-
-  const lockPath = path.join(dir, lockFileName);
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const handle = await fs.promises.open(lockPath, 'wx');
-      await handle.writeFile(String(process.pid), 'utf-8');
-      await handle.close();
-      return { release: async () => { await fs.promises.rm(lockPath, { force: true }); } };
-    } catch (e: any) {
-      if (e?.code !== 'EEXIST')
-        throw e;
-      const owner = Number((await fs.promises.readFile(lockPath, 'utf-8').catch(() => '')).trim());
-      if (owner && owner !== process.pid && isProcessAlive(owner))
-        return undefined;
-      await fs.promises.rm(lockPath, { force: true });
-    }
-  }
-  return undefined;
-}
-
-/** Chromium's own lock: a `SingletonLock` symlink whose target is host-pid. */
-async function chromiumSingletonAlive(dir: string): Promise<boolean> {
-  const singleton = path.join(dir, 'SingletonLock');
-  let target: string;
-  try {
-    target = await fs.promises.readlink(singleton);
-  } catch {
-    return false;
-  }
-  const pid = Number(target.split('-').pop());
-  return !!pid && isProcessAlive(pid);
-}
-
-export function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e: any) {
-    return e?.code === 'EPERM';
   }
 }
 

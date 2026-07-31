@@ -4,7 +4,6 @@ import type * as playwright from 'playwright-core';
 
 export type ResolvedTarget = {
   locator: playwright.Locator;
-  /** How the locator reads in the generated code section. */
   resolved: string;
 };
 

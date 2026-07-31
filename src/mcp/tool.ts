@@ -37,7 +37,6 @@ export type ToolSchema = {
   type: ToolType;
 };
 
-/** What the dispatcher needs; the handler's first argument is resolved by `kind`. */
 export type ToolDefinition = {
   kind: 'global' | 'instance' | 'tab';
   schema: ToolSchema;
@@ -49,7 +48,6 @@ const instanceIdField = {
   instance_id: z.string().describe('Browser instance id returned by browser_open.'),
 };
 
-/** A tool that needs no browser: browser_open, browser_list and the web_* tools. */
 export function defineGlobalTool<Input extends z.ZodObject>(tool: {
   schema: { name: string; title: string; description: string; inputSchema: Input; type: ToolType };
   handle: (host: ServerHost, params: z.output<Input>, response: Response, signal?: AbortSignal) => Promise<void>;
@@ -57,7 +55,6 @@ export function defineGlobalTool<Input extends z.ZodObject>(tool: {
   return { kind: 'global', schema: tool.schema, handle: tool.handle };
 }
 
-/** A tool that operates on a whole instance rather than one tab. */
 export function defineInstanceTool<Input extends z.ZodObject>(tool: {
   schema: { name: string; title: string; description: string; inputSchema: Input; type: ToolType };
   handle: (instance: Instance, params: z.output<Input>, response: Response, signal?: AbortSignal) => Promise<void>;

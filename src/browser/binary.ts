@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 
 import manifest from './manifest.json';
 import { paths } from '../config';
-import { isProcessAlive } from './profiles';
+import { waitForLock } from '../util/lockfile';
 
 import type { Config } from '../config';
 
@@ -82,7 +82,8 @@ export function normalizeExecutable(p: string, options?: { mustExist?: boolean }
 
 export async function downloadAndExtract(entry: PlatformEntry, cacheDir: string): Promise<void> {
   await fs.promises.mkdir(cacheDir, { recursive: true });
-  const lock = await acquireDownloadLock(cacheDir);
+  // Two concurrent MCP sessions must not download into the same directory.
+  const lock = await waitForLock(path.join(cacheDir, '.download.lock'), 10 * 60 * 1000);
   try {
     // Another session may have finished while we waited for the lock.
     if (fs.existsSync(path.join(cacheDir, entry.executable)))
@@ -133,30 +134,4 @@ export async function sha256File(file: string): Promise<string> {
   const hash = crypto.createHash('sha256');
   await pipeline(fs.createReadStream(file), hash);
   return hash.digest('hex');
-}
-
-/** Two concurrent MCP sessions must not download into the same directory. */
-async function acquireDownloadLock(dir: string): Promise<{ release: () => Promise<void> }> {
-  const lockPath = path.join(dir, '.download.lock');
-  const deadline = Date.now() + 10 * 60 * 1000;
-  let blockedBy: number | undefined;
-  while (Date.now() <= deadline) {
-    try {
-      const handle = await fs.promises.open(lockPath, 'wx');
-      await handle.writeFile(String(process.pid), 'utf-8');
-      await handle.close();
-      return { release: async () => { await fs.promises.rm(lockPath, { force: true }); } };
-    } catch (e: any) {
-      if (e?.code !== 'EEXIST')
-        throw e;
-      const owner = Number((await fs.promises.readFile(lockPath, 'utf-8').catch(() => '')).trim());
-      if (!owner || !isProcessAlive(owner)) {
-        await fs.promises.rm(lockPath, { force: true });
-        continue;
-      }
-      blockedBy = owner;
-      await new Promise(f => setTimeout(f, 1000));
-    }
-  }
-  throw new Error(`Timed out waiting for another agent-browser process (pid ${blockedBy}) to finish downloading Chromium.`);
 }

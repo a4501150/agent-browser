@@ -3,12 +3,13 @@ import * as z from 'zod';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
+import { version } from '../../package.json';
 import { allTools } from './registry';
 import { callTool } from './dispatch';
 
 import type { ServerHost } from './host';
 
-export const serverInfo = { name: 'agent-browser', version: '0.1.0' };
+export const serverInfo = { name: 'agent-browser', version };
 
 export function createServer(host: ServerHost): Server {
   const server = new Server(serverInfo, { capabilities: { tools: {} } });
@@ -22,7 +23,9 @@ export function createServer(host: ServerHost): Server {
       annotations: {
         title: tool.schema.title,
         readOnlyHint: tool.schema.type === 'readOnly',
-        destructiveHint: false,
+        // destructiveHint is deliberately omitted: it defaults to true, and
+        // claiming false for tools that can close a browser, clear cookies or
+        // run arbitrary page script would be a lie.
         openWorldHint: true,
       },
     })),

@@ -136,6 +136,30 @@ reintroduction. Playwright's defaults *do* already include `--use-mock-keychain`
 which a locally built Chromium deadlocks on the macOS Keychain prompt) and, when
 headless, the `primaryPointerType`/`primaryHoverType` blink settings.
 
+### Only a temp dir or a slot may be deleted
+
+`Registry.reapOrphans` deletes the user-data directory of an ephemeral record.
+`Instance.profileIsEphemeral` derives that from `ProfileChoice.kind`, **not** from
+`profileName`: an explicit `user_data_dir` also has no profile name, so the obvious
+version of this deletes a directory `browser_open` documents as never deleted. Pinned by
+a test.
+
+### The web tier's SSRF policy has to cover the browser path too
+
+`httpFetch` checks every redirect hop, but `page.goto` follows redirects itself, so
+`Renderer` re-checks each navigation request that has a `redirectedFrom()`. Anything that
+navigates a page for the web_* tools must go through `Renderer._withPage`; the PDF path
+originally called `page.goto` directly and accepted `file://`.
+
+The initial URL may be loopback or private (fetching your own dev server is legitimate); a
+*redirect target* may not, since the caller did not choose it.
+
+### `withRenderer` memoises the promise, not the renderer
+
+Concurrent crawl workers would otherwise each find it unset, each launch a browser, and
+all but the last would leak. Each render also gets its own page, because a shared tab
+means concurrent navigations cancelling each other.
+
 ## Design rules
 
 - **Never fall back to a stock Chromium.** Every guarantee comes from the patches; a

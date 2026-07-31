@@ -63,13 +63,10 @@ const webFetch = defineGlobalTool({
       // Print-to-PDF only exists in the browser.
       const renderer = await Renderer.create(host);
       try {
-        const tab = await renderer.instance.ensureTab();
-        await tab.page.goto(params.url, { waitUntil: 'load', timeout: params.timeout ?? 30_000 });
-        await tab.page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
-        const pdf = await tab.page.pdf({ printBackground: true });
+        const printed = await renderer.pdf(params.url, { timeoutMs: params.timeout, signal });
         const file = await host.artifacts.outputFile({ prefix: 'page', ext: 'pdf' });
-        await response.addFileResult(`PDF of ${params.url}`, file, pdf);
-        response.addTextResult(`Rendered ${tab.page.url()} to PDF (${pdf.length} bytes).`);
+        await response.addFileResult(`PDF of ${params.url}`, file, printed.data);
+        response.addTextResult(`Rendered ${printed.url} to PDF (${printed.data.length} bytes).`);
       } finally {
         await renderer.close();
       }

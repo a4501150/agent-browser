@@ -93,6 +93,27 @@ describe('web_fetch', () => {
     expect(result.text).toMatch(/only http and https/);
   });
 
+  it('applies the same url policy to the pdf path, which goes straight to a browser', async () => {
+    for (const url of ['file:///etc/passwd', 'http://169.254.169.254/latest/meta-data/']) {
+      const result = await harness.call('web_fetch', { url, format: 'pdf' });
+      expect(result.isError, `${url} should have been refused`).toBe(true);
+      expect(result.text).toMatch(/only http and https|link-local/);
+    }
+  });
+
+  it('runs concurrent browser-rendered fetches without leaking browsers', async () => {
+    const before = (await harness.call('browser_list', {})).section('Result');
+    expect(before).toMatch(/No browser instances are open/);
+    const results = await Promise.all([
+      harness.call('web_fetch', { url: fixtures.url('spa.html'), render: 'always' }),
+      harness.call('web_fetch', { url: fixtures.url('a.html'), render: 'always' }),
+      harness.call('web_fetch', { url: fixtures.url('b.html'), render: 'always' }),
+    ]);
+    for (const result of results)
+      expect(result.isError, result.text).toBe(false);
+    expect((await harness.call('browser_list', {})).section('Result')).toMatch(/No browser instances are open/);
+  });
+
   it('reports a 404 rather than pretending', async () => {
     const result = await harness.call('web_fetch', { url: fixtures.url('no-such-page.html'), render: 'never' });
     expect(result.text).toContain('HTTP status: 404');
@@ -148,6 +169,19 @@ describe('web_crawl', () => {
     const body = result.section('Result')!;
     expect(body).toContain('a.html');
     expect(body).toContain('b.html');
+  });
+
+  it('crawls with a real browser per page without leaking one', async () => {
+    const result = await harness.call('web_crawl', {
+      url: fixtures.url('a.html'),
+      max_pages: 3,
+      concurrency: 3,
+      render: 'always',
+    });
+    expect(result.isError, result.text).toBe(false);
+    expect(result.section('Result')).toContain('Fetched with a real browser');
+    // One shared renderer, closed when the crawl ends.
+    expect((await harness.call('browser_list', {})).section('Result')).toMatch(/No browser instances are open/);
   });
 
   it('runs pages concurrently rather than one at a time', async () => {
