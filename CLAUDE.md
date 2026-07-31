@@ -384,11 +384,18 @@ rather than only on the checkbox square, and Playwright scrolls the element into
 Measured against a real sitekey: siteverify returned `success: true` with
 `metadata.interactive: true`, i.e. Cloudflare counted it as a human solving a real challenge.
 
-Two traps around measuring this:
+Three traps, all of which fail silently:
 
+- **The click must come after the widget renders.** Driven through the server with no pause,
+  `browser_click` on the host reports success, runs a real Playwright click, and sets no
+  token; measured 0 s → nothing, 1 s / 2 s / 4 s → solved. By hand this never shows up,
+  because reading the intermediate output is itself the delay. There is no selector to wait
+  on either — the hidden `cf-turnstile-response` input exists *before* the widget renders, so
+  it is not a readiness signal, and the visible text is inside the closed root. Wait, then
+  check the token.
 - **An element screenshot scrolls the page**, so coordinates read before it are stale. A click
-  26 px low lands in the widget's footer banner and does nothing, silently. Re-read the box
-  after the last screenshot, or use the selector and no coordinates at all.
+  26 px low lands in the widget's footer banner and does nothing. Re-read the box after the
+  last screenshot, or use the selector and no coordinates at all.
 - **A real managed widget mostly passes us without interaction**, so it cannot prove a click
   works: one run reported `interactive: false` from an already-trusted ephemeral id, and a
   fresh profile auto-solved before anything was clicked. The dummy sitekey

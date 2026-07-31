@@ -43,7 +43,9 @@ const webFetch = defineGlobalTool({
     name: 'web_fetch',
     description: 'Fetch one URL with a real browser and return it as a self-contained markdown document, the rendered ' +
       'HTML, the raw response body, or a print-to-PDF. No instance_id is needed; for a page you have already ' +
-      'interacted with or logged into, use browser_read_page instead, since this refetches the URL cold.',
+      'interacted with or logged into, use browser_read_page instead, since this refetches the URL cold. ' +
+      'A Cloudflare challenge that clears on its own is waited out; one that wants a click is not, so open an ' +
+      'instance and click the widget there.',
     inputSchema: z.object({
       url: z.string().describe('The URL to fetch.'),
       format: z.enum(['markdown', 'html', 'raw', 'pdf']).optional().describe('"markdown" (default) is the article as one self-contained document. "html" is the DOM after scripts have run, "raw" the bytes the server sent before them, "pdf" prints the page. Anything that is not a web page comes back as itself whatever you ask for.'),

@@ -13,6 +13,9 @@ const click = defineTabTool({
   schema: {
     name: 'browser_click',
     description: 'Click an element. Works identically on elements inside cross-origin iframes: pass their frame-prefixed ref. ' +
+      'A widget whose content sits in a closed shadow root has no ref, so pass its host CSS selector: clicking ' +
+      '.cf-turnstile solves a Turnstile checkbox, but only once it has rendered -- a click before that reports ' +
+      'success and does nothing, so give it a moment after load and confirm the token was set. ' +
       'Omit checked for every ordinary click; set it only to tick or untick a checkbox or radio.',
     inputSchema: elementSchema.extend({
       button: z.enum(['left', 'right', 'middle']).optional().describe('Mouse button. Defaults to left.'),

@@ -7,9 +7,10 @@ import { formatObjectOrVoid } from '../vendor/stringUtils';
 const mouse = defineTabTool({
   schema: {
     name: 'browser_mouse',
-    description: 'Drive the mouse by viewport coordinates, in CSS pixels. Prefer browser_click with a ref where you can: ' +
-      'coordinates are brittle, and for an element inside a cross-origin iframe the ref path also does the ' +
-      'frame-to-viewport translation that raw coordinates do not.',
+    description: 'Drive the mouse by viewport coordinates, in CSS pixels. Prefer browser_click with a ref or a CSS ' +
+      'selector where you can: coordinates are brittle, and for an element inside a cross-origin iframe the ref path ' +
+      'also does the frame-to-viewport translation that raw coordinates do not. Anything that scrolls invalidates ' +
+      'coordinates you already measured, an element screenshot included, so read the box again after the last one.',
     inputSchema: z.object({
       action: z.enum(['move', 'click', 'down', 'up', 'drag']).describe('What to do.'),
       x: z.number().describe('X coordinate, viewport-relative.'),

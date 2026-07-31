@@ -24,7 +24,9 @@ const readPage = defineTabTool({
     name: 'browser_read_page',
     description: 'Return the page as an accessibility outline with [ref=eN] handles that every action tool accepts. ' +
       'This is the primary way to perceive a page: it is 10-50x smaller than the HTML and it recurses into iframes, ' +
-      'including cross-origin ones, whose refs come back frame-prefixed (f1e3). Prefer this over a screenshot.',
+      'including cross-origin ones, whose refs come back frame-prefixed (f1e3). Prefer this over a screenshot. ' +
+      'Content inside a closed shadow root is absent and can never have a ref -- a CAPTCHA widget is the usual case; ' +
+      'click its host element by CSS selector instead.',
     inputSchema: z.object({
       target: z.string().optional().describe(`Read only this element's subtree. ${targetDescription}`),
       depth: z.number().int().positive().optional().describe('Limit how deep the outline goes.'),
