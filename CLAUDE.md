@@ -3,7 +3,7 @@
 ## What this repo is
 
 An MCP server that drives the patched Chromium from
-`/Users/jinyangli/src/fingerprint-chromium` (a patch store; **read its CLAUDE.md before
+`/Users/jinyangli/src/undetected-chromium` (a patch store; **read its CLAUDE.md before
 touching anything about detection**). 32 tools, all always on, no capability system, zero
 required arguments.
 
@@ -33,7 +33,7 @@ an unrelated "browser automation CLI for AI agents" (0.33.1 at the time of writi
 
 | Layer | Where |
 |---|---|
-| Patched Chromium 148.0.7778.215 | `fingerprint-chromium` patches, built at `/Users/jinyangli/src/chromium-build/build/src/out/Default/Chromium.app` |
+| Patched Chromium 148.0.7778.215 | `undetected-chromium` patches, built at `/Users/jinyangli/src/chromium-build/build/src/out/Default/Chromium.app` |
 | Playwright, pinned exact `1.62.1` | `playwright-core` dependency **and** the vendored tool layer, same tag |
 | Our tool + MCP layer | `src/` |
 

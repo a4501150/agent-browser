@@ -20,7 +20,7 @@ agent-browser serve      # Streamable HTTP at /mcp
 Two things are hard about driving a browser for an agent, and most tools get one of them.
 
 **Not being detected.** The browser is built from
-[fingerprint-chromium](https://github.com/a4501150/undetected-chromium) patches, so the
+[undetected-chromium](https://github.com/a4501150/undetected-chromium) patches, so the
 tells are removed in C++ rather than papered over with injected JavaScript — which is
 itself the loudest tell. Both columns below were measured through this server on the same
 machine, changing nothing but `--binary`, so the only variable is the browser:
