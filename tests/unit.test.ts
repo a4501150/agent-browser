@@ -4,6 +4,7 @@ import { CliExit, parseCli } from '../src/cli';
 import { extract } from '../src/web/extract';
 import { extractArticle, extractLinks, htmlToMarkdown, isPlausibleArticle, readPage } from '../src/web/markdown';
 import { allTools } from '../src/mcp/registry';
+import { instructions } from '../src/mcp/instructions';
 import { assertUrlAllowed, BlockedUrlError } from '../src/util/ssrf';
 import { parseResults } from '../src/web/search';
 import { maxConcurrentPages, PageGate } from '../src/web/render';
@@ -60,6 +61,25 @@ describe('tool registry', () => {
   it('gives every tool a description', () => {
     for (const tool of allTools)
       expect(tool.schema.description.length).toBeGreaterThan(20);
+  });
+});
+
+describe('server instructions', () => {
+  // Injected into every conversation the server is connected to and re-sent
+  // with the transcript every turn after that, so length is paid repeatedly.
+  it('stays short enough to inject into every conversation', () => {
+    expect(instructions.length).toBeGreaterThan(200);
+    expect(instructions.length).toBeLessThanOrEqual(2048);
+  });
+
+  // A renamed tool would leave prose every conversation sees pointing at a
+  // name that no longer resolves.
+  it('names only tools that exist', () => {
+    const names = new Set(allTools.map(t => t.schema.name));
+    const cited = [...instructions.matchAll(/`((?:browser|web)_\w+)`/g)].map(m => m[1]);
+    expect(cited.length).toBeGreaterThan(0);
+    for (const name of cited)
+      expect(names).toContain(name);
   });
 });
 

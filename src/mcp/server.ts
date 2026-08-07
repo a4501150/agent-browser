@@ -6,13 +6,14 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { version } from '../../package.json';
 import { allTools } from './registry';
 import { callTool } from './dispatch';
+import { instructions } from './instructions';
 
 import type { ServerHost } from './host';
 
 export const serverInfo = { name: 'agent-browser', version };
 
 export function createServer(host: ServerHost): Server {
-  const server = new Server(serverInfo, { capabilities: { tools: {} } });
+  const server = new Server(serverInfo, { capabilities: { tools: {} }, instructions });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: allTools.map(tool => ({
