@@ -9,6 +9,13 @@
       "size": 153777682,
       "app": "Chromium.app",
       "executable": "Chromium.app/Contents/MacOS/Chromium"
+    },
+    "linux-x64": {
+      "url": "https://github.com/a4501150/agent-browser/releases/download/chromium-148.0.7778.215-1/chromium-148.0.7778.215-linux-x64.tar.gz",
+      "sha256": "4efb3d3830ac20a7f97ca5b4f41e959dc43d71dcbdaaf6b5652f1aeb316f3a7b",
+      "size": 187297127,
+      "app": "chrome-linux64",
+      "executable": "chrome-linux64/chrome"
     }
   }
 }

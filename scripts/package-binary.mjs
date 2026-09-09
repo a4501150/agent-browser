@@ -74,7 +74,10 @@ async function main() {
     throw new Error(`manifest.json has no entry for ${platform}.`);
 
   // Sanity-check the bundle before spending two minutes compressing it.
-  const executable = path.join(app, entry.executable.replace(/^.*?\.app\//, ''));
+  const rel = entry.executable.startsWith(`${entry.app}/`)
+    ? entry.executable.slice(entry.app.length + 1)
+    : entry.executable;
+  const executable = path.join(app, rel);
   if (!fs.existsSync(executable))
     throw new Error(`${executable} is missing; that is not a usable app bundle.`);
   const { stdout: version } = await execFileAsync(executable, ['--version']).catch(() => ({ stdout: '' }));
