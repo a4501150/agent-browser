@@ -7,18 +7,21 @@
  * symlinks (including Chromium Framework.framework/Versions/Current) and
  * executable bits, and a naive zip extractor silently breaks the bundle.
  *
+ * Runs on the build host itself, including the Windows one (`tar.exe` ships
+ * since Windows 10; the gzip step is in-process — see scripts/archive.mjs).
+ *
  * Usage
- *   node scripts/package-binary.mjs --app <path to Chromium.app> [--out <dir>]
+ *   node scripts/package-binary.mjs --app <path to Chromium.app or chrome-win64 dir> [--out <dir>]
  *
  * The asset is never committed to git; upload it to a GitHub release.
  */
-import { execFile, spawn } from 'node:child_process';
-import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+
+import { createReproducibleTarGz, sha256File, fileSize } from './archive.mjs';
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -39,24 +42,6 @@ function parseArgs(argv) {
     }
   }
   return args;
-}
-
-/** tar | gzip -n, spawned directly so no shell quoting is involved. */
-async function pipeThrough(archive, parent, name) {
-  const tar = spawn('tar', ['-cf', '-', '-C', parent, name], { stdio: ['ignore', 'pipe', 'inherit'] });
-  const gzip = spawn('gzip', ['-9', '-n'], { stdio: ['pipe', 'pipe', 'inherit'] });
-  const out = fs.createWriteStream(archive);
-  const exits = [tar, gzip].map(child => new Promise((resolve, reject) => {
-    child.once('error', reject);
-    child.once('exit', code => code === 0 ? resolve() : reject(new Error(`${child.spawnfile} exited with ${code}`)));
-  }));
-  await Promise.all([pipeline(tar.stdout, gzip.stdin), pipeline(gzip.stdout, out), ...exits]);
-}
-
-async function sha256(file) {
-  const hash = crypto.createHash('sha256');
-  await pipeline(fs.createReadStream(file), hash);
-  return hash.digest('hex');
 }
 
 async function main() {
@@ -94,15 +79,15 @@ async function main() {
   // -C the parent so the archive contains "Chromium.app/..." at its root, which
   // is what the resolver expects to find after extraction.
   //
-  // `gzip -n` rather than `tar -czf`: gzip otherwise stamps the current time
-  // into its header, so packaging the same bundle twice produces two different
-  // checksums. That makes the hash you paste into the manifest depend on *which
-  // run* produced the file you uploaded -- re-run the packager afterwards and
-  // the manifest silently stops matching the published asset.
-  await pipeThrough(archive, path.dirname(app), path.basename(app));
+  // The gzip header's MTIME field is zeroed so packaging the same bundle twice
+  // produces two identical checksums. Otherwise the hash you paste into the
+  // manifest depends on *which run* produced the file you uploaded -- re-run
+  // the packager afterwards and the manifest silently stops matching the
+  // published asset.
+  await createReproducibleTarGz(archive, path.dirname(app), path.basename(app));
 
-  const digest = await sha256(archive);
-  const { size } = fs.statSync(archive);
+  const digest = await sha256File(archive);
+  const size = fileSize(archive);
 
   // Upload before pasting: a manifest that names a checksum for an asset that
   // does not exist yet turns a clear "nothing published" message into a 404.

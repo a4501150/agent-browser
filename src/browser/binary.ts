@@ -52,8 +52,8 @@ export async function resolveBinary(config: Config): Promise<string> {
 
   if (!entry) {
     throw new Error(
-      `No patched Chromium build exists for ${platformKey()}. ` +
-      'Only darwin-arm64 is published. Build it yourself and point at it with ' +
+      `No patched Chromium build exists for ${platformKey()}. Published platforms: ` +
+      `${Object.keys(manifest.platforms).join(', ')}. Build it yourself and point at it with ` +
       '--binary <path> or AGENT_BROWSER_BINARY.');
   }
   if (!entry.sha256) {

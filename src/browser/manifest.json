@@ -16,6 +16,13 @@
       "size": 187297127,
       "app": "chrome-linux64",
       "executable": "chrome-linux64/chrome"
+    },
+    "win32-x64": {
+      "url": "https://github.com/a4501150/agent-browser/releases/download/chromium-148.0.7778.215-1/chromium-148.0.7778.215-win32-x64.tar.gz",
+      "sha256": null,
+      "size": null,
+      "app": "chrome-win64",
+      "executable": "chrome-win64/chrome.exe"
     }
   }
 }
