@@ -13,8 +13,8 @@
  *
  * The archive contains the executable at its root (agent-browser[.exe]);
  * the consumer extracts it into its own vendor layout. The asset is never
- * committed to git; upload it to a GitHub release tagged server-<version>
- * (`gh release upload server-<version> <archive> --clobber` for additional
+ * committed to git; upload it to a GitHub release tagged v<version>
+ * (`gh release upload v<version> <archive> --clobber` for additional
  * platforms after the first `gh release create`).
  */
 import { spawn } from 'node:child_process';
@@ -164,9 +164,9 @@ async function main() {
   process.stdout.write(`archive:    ${archive}\n`);
   process.stdout.write(`sha256:     ${digest}\n`);
   process.stdout.write(`size:       ${fileSize(archive)}\n`);
-  process.stdout.write('\nUpload it under the tag server-\n');
-  process.stdout.write(`   gh release create server-${version} ${archive} --title "agent-browser server ${version}" --notes "..."\n`);
-  process.stdout.write(`   (additional platforms: gh release upload server-${version} ${archive} --clobber)\n`);
+  process.stdout.write('\nUpload it under the tag v<version>:\n');
+  process.stdout.write(`   gh release create v${version} ${archive} --title "agent-browser server ${version}" --notes "..."\n`);
+  process.stdout.write(`   (additional platforms: gh release upload v${version} ${archive} --clobber)\n`);
 }
 
 main().catch(error => {

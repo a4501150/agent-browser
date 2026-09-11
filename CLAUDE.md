@@ -616,7 +616,7 @@ The MCP server ships the same way: `node scripts/package-server-binary.mjs
 [--target bun-darwin-arm64|bun-linux-x64|bun-windows-x64]` compiles a single-file
 executable with `bun build --compile` (bun cross-compiles, so all three assets come from
 one machine), smoke-tests it over stdio when the target is the host, and prints the
-`gh release` command. Tag: `server-<package.json version>`; the archive holds just the
+`gh release` command. Tag: `v<package.json version>` (the `chromium-` prefix keeps browser assets from colliding); the archive holds just the
 executable at its root and free-code vendors it (`scripts/agentBrowser.ts`).
 
 Two things to know before touching this script:
