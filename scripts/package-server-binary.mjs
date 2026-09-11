@@ -153,7 +153,7 @@ async function main() {
   }
 
   fs.mkdirSync(args.out, { recursive: true });
-  const name = `agent-browser-server-${version}-${platform}.tar.gz`;
+  const name = `agent-browser_${version}_${platform}.tar.gz`;
   const archive = path.join(args.out, name);
   await createReproducibleTarGz(archive, buildDir, exe);
 
