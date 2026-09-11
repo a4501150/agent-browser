@@ -1,6 +1,6 @@
 {
   "name": "agent-browser",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "An undetectable browser MCP server. Cross-origin iframes are ordinary DOM.",
   "license": "Apache-2.0",

@@ -3,10 +3,10 @@
  * Compile the MCP server into a single-file executable and package it as the
  * release asset free-code vendors (see free-code scripts/agentBrowser.ts).
  *
- * One executable per platform: `bun build --compile` bundles node_modules and
- * the imported manifest.json, so end users need neither Node nor Bun installed.
- * bun cross-compiles, so all three assets can be produced from one machine
- * (`--target bun-darwin-arm64 | bun-linux-x64 | bun-windows-x64`).
+ * One executable per platform: scripts/compile-server.mjs bundles node_modules
+ * and the imported manifest.json via Bun.build, so end users need neither Node
+ * nor Bun installed. bun cross-compiles, so all three assets can be produced
+ * from one machine (`--target bun-darwin-arm64 | bun-linux-x64 | bun-windows-x64`).
  *
  * Usage
  *   node scripts/package-server-binary.mjs [--target <bun-target>] [--out <dir>] [--no-smoke]
@@ -19,6 +19,7 @@
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -72,13 +73,28 @@ function run(cmd, args, opts = {}) {
   });
 }
 
+const EXPECTED_TOOL_COUNT = 32; // src/mcp: 32 tools, all always on (see CLAUDE.md).
+
+function runCapture(cmd, cmdArgs, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, cmdArgs, { stdio: ['ignore', 'pipe', 'pipe'], ...opts });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.once('error', reject);
+    child.once('close', code => code === 0
+      ? resolve(stdout)
+      : reject(new Error(`${cmd} exited with ${code} (stderr: ${stderr})`)));
+  });
+}
+
 /**
- * Spawn the freshly compiled executable and complete an MCP handshake over
- * stdio. This is the only check that `bun build --compile` did not silently
- * drop something playwright-core needs (dynamic requires, worker payload).
+ * Complete an MCP handshake over stdio with a running server child. This is
+ * the only check that the compile did not silently drop something
+ * playwright-core needs (dynamic requires, worker payload).
  */
-async function smokeTest(executable) {
-  const child = spawn(executable, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+async function handshake(child) {
   let stderr = '';
   child.stderr.on('data', chunk => { stderr += chunk; });
   const waiters = [];
@@ -119,14 +135,80 @@ async function smokeTest(executable) {
   const init = await nextMessage(1);
   if (!init.result?.serverInfo?.name)
     throw new Error(`bad initialize result: ${JSON.stringify(init)}`);
+  if (init.result.serverInfo.version !== version)
+    throw new Error(`server reports ${init.result.serverInfo.version}, archive is ${version}`);
   send({ jsonrpc: '2.0', method: 'notifications/initialized' });
   send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   const tools = await nextMessage(2);
-  if (!Array.isArray(tools.result?.tools) || tools.result.tools.length === 0)
+  if (!Array.isArray(tools.result?.tools))
     throw new Error(`bad tools/list result: ${JSON.stringify(tools).slice(0, 500)}`);
-  process.stdout.write(`smoke:      ok (${init.result.serverInfo.name} ${init.result.serverInfo.version}, ${tools.result.tools.length} tools)\n`);
+  if (tools.result.tools.length !== EXPECTED_TOOL_COUNT)
+    throw new Error(`tools/list returned ${tools.result.tools.length} tools, expected ${EXPECTED_TOOL_COUNT}`);
   child.stdin.end();
   child.kill();
+  return `${init.result.serverInfo.name} ${init.result.serverInfo.version}, ${tools.result.tools.length} tools`;
+}
+
+/**
+ * Smoke-test the packaged asset, not the build tree: extract the exact archive
+ * into a temp dir, run it from an unrelated cwd, and keep the repo's own
+ * node_modules/playwright-core moved out of the way for the duration. Without
+ * the eviction the binary can still lazily read the build host's copy of
+ * package.json / browsers.json and pass while being un-relocatable;
+ * scripts/compile-server.mjs is what makes this pass honestly.
+ */
+async function smokeTestArchive(archive, exe) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-browser-smoke-'));
+  const pwDir = path.join(repoRoot, 'node_modules', 'playwright-core');
+  const pwEvicted = path.join(repoRoot, 'node_modules', 'playwright-core.smoke-evicted');
+  const extractDir = path.join(tmp, 'extracted');
+  fs.mkdirSync(extractDir);
+  const restore = () => {
+    if (fs.existsSync(pwEvicted) && !fs.existsSync(pwDir))
+      fs.renameSync(pwEvicted, pwDir);
+  };
+  // Ctrl-C during the eviction window must not leave playwright-core renamed;
+  // drop the handler first so the re-raised signal takes the default action.
+  const onSignal = signal => {
+    process.removeListener(signal, onSignal);
+    restore();
+    process.kill(process.pid, signal);
+  };
+  try {
+    if (fs.existsSync(pwEvicted))
+      throw new Error(`${pwEvicted} exists; remove it before packaging (a previous interrupted run?).`);
+    if (!fs.existsSync(pwDir))
+      throw new Error(`${pwDir} is missing; install dependencies before packaging.`);
+    await run('tar', ['-xzf', archive, '-C', extractDir]);
+    const extracted = path.join(extractDir, exe);
+    if (!fs.existsSync(extracted))
+      throw new Error(`archive did not contain ${exe} at its root`);
+
+    fs.renameSync(pwDir, pwEvicted);
+    process.on('exit', restore);
+    process.on('SIGINT', onSignal);
+    process.on('SIGTERM', onSignal);
+    try {
+      const printed = await runCapture(extracted, ['--version'], { cwd: tmp });
+      if (printed !== `${version}\n`)
+        throw new Error(`--version printed ${JSON.stringify(printed)}, expected ${JSON.stringify(`${version}\n`)}`);
+      const summary = await handshake(spawnChild(extracted, tmp));
+      process.stdout.write(`smoke:      ok (extracted archive, playwright-core evicted, foreign cwd; ${summary})\n`);
+    }
+    finally {
+      process.removeListener('exit', restore);
+      process.removeListener('SIGINT', onSignal);
+      process.removeListener('SIGTERM', onSignal);
+      restore();
+    }
+  }
+  finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+function spawnChild(exe, cwd) {
+  return spawn(exe, [], { stdio: ['pipe', 'pipe', 'pipe'], cwd });
 }
 
 async function main() {
@@ -136,26 +218,26 @@ async function main() {
   const buildDir = path.join(args.out, '.server-build', platform);
   fs.mkdirSync(buildDir, { recursive: true });
   const executable = path.join(buildDir, exe);
-  process.stdout.write(`compiling:  bun build --compile --target ${args.target}\n`);
-  // playwright-core lazily requires chromium-bidi, but only on the BiDi
-  // connection path -- this server always speaks CDP to a specific executable,
-  // so the module is never loaded and there is nothing to bundle. Left
-  // non-external, the compile fails resolving it.
-  await run('bun', ['build', '--compile', `--target=${args.target}`,
-    '--external', 'chromium-bidi',
-    '--outfile', executable, path.join(repoRoot, 'src', 'index.ts')]);
-
-  if (args.target === defaultTarget()) {
-    await smokeTest(executable);
-  }
-  else {
-    process.stdout.write('smoke:      skipped (cross target, run the host asset to verify)\n');
-  }
+  // Bun.build via scripts/compile-server.mjs, not `bun build --compile`: the
+  // build there patches playwright-core's __dirname-derived packageRoot and
+  // its dynamic package.json / browsers.json requires into static literals,
+  // so the binary does not secretly depend on this machine's node_modules.
+  await run('bun', [path.join(repoRoot, 'scripts', 'compile-server.mjs'),
+    `--target=${args.target}`, `--outfile=${executable}`]);
 
   fs.mkdirSync(args.out, { recursive: true });
   const name = `agent-browser_${version}_${platform}.tar.gz`;
   const archive = path.join(args.out, name);
   await createReproducibleTarGz(archive, buildDir, exe);
+
+  // Smoke the extracted archive, not the build tree — the build dir sits
+  // inside the repo, where a stray host-path read would go unnoticed.
+  if (args.smoke && args.target === defaultTarget()) {
+    await smokeTestArchive(archive, exe);
+  }
+  else {
+    process.stdout.write('smoke:      skipped (cross target or --no-smoke, run the host asset to verify)\n');
+  }
 
   const digest = await sha256File(archive);
   // The consumer (free-code scripts/agentBrowser.ts) verifies against this

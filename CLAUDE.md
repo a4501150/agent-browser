@@ -614,18 +614,25 @@ packaging run printed.
 
 The MCP server ships the same way: `node scripts/package-server-binary.mjs
 [--target bun-darwin-arm64|bun-linux-x64|bun-windows-x64]` compiles a single-file
-executable with `bun build --compile` (bun cross-compiles, so all three assets come from
-one machine), smoke-tests it over stdio when the target is the host, and prints the
+executable via `scripts/compile-server.mjs` (Bun.build; bun cross-compiles, so all three assets come from
+one machine), smoke-tests the *extracted archive* over stdio when the target is the host, and prints the
 `gh release` command. Tag: `v<package.json version>` (the `chromium-` prefix keeps browser assets from colliding); the archive holds just the
 executable at its root, named `agent-browser_<version>_<platform>.tar.gz`, and free-code vendors it (`scripts/agentBrowser.ts`).
 
-Two things to know before touching this script:
+Two things to know before touching these scripts:
 
+- `playwright-core` derives `packageRoot` from `__dirname` and lazily `require`s its
+  `package.json` / `browsers.json` against it — at bun-runtime that reads the *build
+  host's* node_modules, so a bare `bun build --compile` binary is un-relocatable while
+  still passing a smoke test on the build machine. `compile-server.mjs`'s onLoad plugin
+  replaces those sites with static literals (counts asserted) and neutralizes
+  `packageRoot`; the host smoke therefore extracts the archive, evicts
+  `node_modules/playwright-core` for the run, and executes from a foreign cwd.
 - `playwright-core` lazily `require`s `chromium-bidi` on its BiDi connection path only.
   This server always speaks CDP to a specific executable, so the module never loads —
-  it is passed to `--external` to keep the compile from failing to resolve it.
+  it is passed to `external` to keep the compile from failing to resolve it.
 - The host smoke test inside the script is the only check that compilation bundled
-  everything playwright needs; never trust `bun build` exiting 0 on its own.
+  everything playwright needs; never trust `Bun.build` exiting 0 on its own.
 
 ### Publishing couples the test suite to the release
 
