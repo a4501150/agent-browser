@@ -19,8 +19,8 @@
     },
     "win32-x64": {
       "url": "https://github.com/a4501150/agent-browser/releases/download/chromium-148.0.7778.215-1/chromium-148.0.7778.215-win32-x64.tar.gz",
-      "sha256": null,
-      "size": null,
+      "sha256": "79ca2a451b8b839a16db6e869019b4b22bec300564293a382b9f9673ff72f124",
+      "size": 196715926,
       "app": "chrome-win64",
       "executable": "chrome-win64/chrome.exe"
     }

@@ -555,9 +555,8 @@ deviceandbrowserinfo, iphey and CreepJS `headless`.
 ## Releasing the browser binary
 
 The browser is shipped as a GitHub release asset, never committed to git (`release/` is
-gitignored). Currently published: tag `chromium-148.0.7778.215-1`, darwin-arm64 and
-linux-x64; `win32-x64` is in the manifest with `sha256: null` until the Windows build is
-uploaded.
+gitignored). Currently published: tag `chromium-148.0.7778.215-1`, darwin-arm64,
+linux-x64 and win32-x64 — all three platforms have assets.
 
 ### The ordering is not optional
 
@@ -609,6 +608,23 @@ CLI). Two runs over an unchanged bundle now produce the same sha256, which is wh
 the published asset independently verifiable. A *recompile* still hashes differently —
 bun stamps the build time into the executable — so always upload the exact file the
 packaging run printed.
+
+### Packaging a Windows bundle
+
+Run the packager on the Windows box itself. Two host-specific facts:
+
+- The bundle to point `--app` at is the mini_installer payload: extract
+  `out/Default/chrome.7z` with 7-Zip into a directory named `chrome-win64` (that is
+  what the manifest's `app`/`executable` expect after extraction). The raw `out/Default`
+  directory is the dev layout — it drags in PDBs and build machinery.
+- `package-binary.mjs` sanity-checks the bundle by running `chrome.exe --version`, and
+  a Chrome started from a service session (Session 0, e.g. an SSM RunCommand) can hang
+  there forever even after the DOM work already succeeded. If that check wedges, kill
+  the stray `chrome.exe`/`node.exe` and call `createReproducibleTarGz`/`sha256File`
+  from `scripts/archive.mjs` directly — the same helpers, minus the version probe.
+
+Repacking the win32 bundle on the build host produced a byte-identical archive, so
+`SOURCE_DATE_EPOCH` works on Windows's `tar.exe` too.
 
 ## Releasing the server binary
 
